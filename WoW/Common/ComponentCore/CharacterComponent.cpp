@@ -48,6 +48,7 @@
 #include "WoW/Source/DB/Rec/ItemVisualsRec.h"
 #include "WoW/Source/DB/Rec/ParticleColorRec.h"
 #include "WoW/Source/Object/ObjectClient/Player_C.h"
+#include "WarcraftXL/Seams.h"
 
 // STATIC: 0x009F6A00
 static int32_t s_itemPriority[NUM_ITEM_SLOTS][NUM_COMPONENT_SECTIONS] = {
@@ -2175,6 +2176,8 @@ GEOCOMPONENTLINKS CCharacterComponent::AddHandItem(CM2Model* model, const ItemDi
 // VERIFY: 9faafec0 auto
 // OFFSET: 0x004EAF70
 void CCharacterComponent::RemoveVisuals(CM2Model* model) {
+    wxl::seam::Component::RemoveVisuals::Before(model);
+
     model->DetachAllChildrenById(15);
     model->DetachAllChildrenById(16);
     model->DetachAllChildrenById(17);
@@ -2198,6 +2201,8 @@ void CCharacterComponent::RemoveVisuals(CM2Model* model) {
     model->m_diffuseTintR = 1.0f;
     model->m_diffuseTintG = 1.0f;
     model->m_diffuseTintB = 1.0f;
+
+    wxl::seam::Component::RemoveVisuals::After(model);
 }
 
 // VERIFY: eec03863 manual
@@ -3695,6 +3700,8 @@ inline ITEM_SLOT CCharacterComponent::GetItemSlotForInvSlot(INVENTORY_SLOTS invS
 // VERIFY: d14b01cc manual
 // OFFSET: 0x004EE460
 void CCharacterComponent::RemoveItem(ITEM_SLOT itemSlot) {
+    wxl::seam::Component::RemoveItem::Before(this, itemSlot);
+
     if (!this->m_itemDisplayID[itemSlot]) {
         return;
     }
@@ -5155,6 +5162,8 @@ bool CCharacterComponent::RenderPrep(int32_t wait) {
 // VERIFY: 3d69252b auto
 // OFFSET: 0x004F16C0
 void CCharacterComponent::FreeComponent(CCharacterComponent* component) {
+    wxl::seam::Component::FreeComponent::Before(component);
+
     uint32_t* heap = s_componentHeap;
     component->~CCharacterComponent();
     ObjectFree(*heap, component->m_heapIndex);
@@ -5613,6 +5622,8 @@ void CCharacterComponent::AddItem(ITEM_SLOT itemSlot, const ItemDisplayInfoRec* 
 
             break;
     }
+
+    wxl::seam::Component::AddItem::After(this, itemSlot, displayRec, itemVisual);
 }
 
 // VERIFY: 1692162c auto

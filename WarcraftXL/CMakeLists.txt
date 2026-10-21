@@ -49,11 +49,12 @@ endif ()
 # player's, Ui the game interface's, FrameScript the script context's, Net the world
 # connection's, Os the window procedure's, BlizzardCore the file open's, SoundInterface
 # the sound's, Scrn the paint's, Gx the device's, Frame the interface's, ConsoleDevice
-# the device's creation and Magic the spell casting's. A library added
+# the device's creation, Magic the spell casting's, Model2 the model renderer's and WoWCommon the
+# character appearance's. A library added
 # here needs nothing else: the calls are declared by Seams.h,
 # which these include directories make reachable.
 set(WXL_SEAM_LIBRARIES WorldClient Event ObjectMgrClient Object Ui FrameScript Net Os BlizzardCore
-    SoundInterface Scrn Gx Frame ConsoleDevice Magic)
+    SoundInterface Scrn Gx Frame ConsoleDevice Magic Model2 WoWCommon)
 
 # The executables carry seam calls of their own: Client.cpp holds the one that takes the client
 # apart. On x64 they link WarcraftXLClient, whose include directories are PUBLIC; on Win32 there

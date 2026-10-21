@@ -97,6 +97,11 @@ static int32_t s_gxTexCacheMaxSize;
 // STATIC: 0x00B49CA0
 static uint32_t s_asyncLoadBufferUsed;
 
+// The edge of the largest image the shared decode scratch (s_mipBits) holds, and so of the largest
+// mip a texture loads at: the original sized the scratch for 1024 and nothing kept a larger image
+// out of it, so a 2048 file overran it (later models ship 2048 textures). Not in the original.
+static const uint32_t s_maxImageSize = 2048;
+
 // STATIC: 0x00B49CA4
 static TSHashTableReuse<CTexture, HASHKEY_TEXTUREFILE> s_textureCache;
 
@@ -617,6 +622,10 @@ uint32_t LoadPredrawnMips(CTgaFile* image, const char* format, int32_t flags, Mi
 void RequestImageDimensions(uint32_t* width, uint32_t* height, uint32_t* bestMip) {
     CGxCaps caps = g_theGxDevicePtr->Caps();
     uint32_t maxSize = caps.m_texMaxSize[0];
+
+    if (maxSize > s_maxImageSize) {
+        maxSize = s_maxImageSize;
+    }
 
     if (!maxSize) {
         SErrSetLastError(STORM_ERROR_INVALID_PARAMETER);
@@ -1204,6 +1213,16 @@ void FillInSolidTexture(const CImVector& color, CTexture* texture) {
     SStrCopy(texture->m_filename, "SolidTexture", 260);
 }
 
+// Whether a texture file of `size` bytes may be read now, with `available` bytes of the 4 MB read
+// budget left - the original's own test, with its unsigned arithmetic kept: the budget's counter is
+// given back on more paths than it is taken on and wraps, and the original reads that as room. The
+// one change: a file larger than the whole budget (a 2048 DXT5 BLP is 5.6 MB) asks for the whole
+// budget, not more than there is - the original never read one, so its texture never finished and
+// the model using it was never drawn. Not in the original.
+static bool AsyncTextureFits(uint32_t size, uint32_t available) {
+    return available >= (size < 0x400000 ? size : 0x400000);
+}
+
 // VERIFY: f77dd4dd manual
 // OFFSET: 0x004B69E0
 void AsyncTextureHandler() {
@@ -1212,7 +1231,7 @@ void AsyncTextureHandler() {
     for (CAsyncObject* object = s_asyncLoadList.Head(); !s_asyncLoadList.IsEnd(object); ) {
         CAsyncObject* next = s_asyncLoadList.RawNext(object);
 
-        if (available >= object->m_size) {
+        if (AsyncTextureFits(object->m_size, available)) {
             AsyncTextureProcess(object, 0);
             available -= object->m_size;
         }
@@ -1223,7 +1242,7 @@ void AsyncTextureHandler() {
     for (CAsyncObject* object = s_asyncTextureList.Head(); !s_asyncTextureList.IsEnd(object); ) {
         CAsyncObject* next = s_asyncTextureList.RawNext(object);
 
-        if (available >= object->m_size) {
+        if (AsyncTextureFits(object->m_size, available)) {
             AsyncTextureProcess(object, 0);
             available -= object->m_size;
         }
@@ -1890,7 +1909,7 @@ int32_t AsyncTextureStatus() {
 // VERIFY: f4a9a3e6 manual
 // OFFSET: 0x004B7F80
 void TextureInitialize() {
-    s_mipBits = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, 1024, 1024), __FILE__, __LINE__, 0));
+    s_mipBits = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, s_maxImageSize, s_maxImageSize), __FILE__, __LINE__, 0));
     AsyncFileReadAddPollHandler(AsyncTextureHandler);
     AsyncFileReadAddStatusHandler(AsyncTextureStatus);
     s_currentTime = OsGetAsyncTimeMs();
@@ -2242,7 +2261,7 @@ CTexture* CreateBlpAsync(char* extension, const char* fileName, uint32_t flags, 
 
     CAsyncObject* object = texture->m_asyncObject;
 
-    if (0x400000 - s_asyncLoadBufferUsed < object->m_size) {
+    if (!AsyncTextureFits(object->m_size, 0x400000 - s_asyncLoadBufferUsed)) {
         s_asyncTextureList.LinkNode(object, 2, nullptr);
     } else {
         AsyncTextureProcess(object, 0);

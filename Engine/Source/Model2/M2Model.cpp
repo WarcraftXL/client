@@ -37,6 +37,7 @@
 #include "Engine/Source/Tempest/CMath.h"
 #include "WoW/Source/DB/DBClient/DBClient.h"
 #include "WoW/Source/Object/ObjectClient/Types.h"
+#include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00A45570
 static const uint32_t s_ribbonBlendModes[] = { 0, 1, 2, 10, 3, 4, 5 };
@@ -2656,7 +2657,7 @@ int32_t CM2Model::SetIndices() {
         }
 
         for (uint32_t i = 0; i < this->m_optGeo->m_skinSectionCount; i++) {
-            M2BatchRange* range = &this->m_optGeo->m_batchRanges[this->m_optGeo->m_skinSections[i].m_skinSectionId];
+            M2BatchRange* range = &this->m_optGeo->m_batchRanges[this->m_optGeo->m_skinSections[i].m_skinSectionId & 0xFFFF];
             uint16_t vertexBase = 0;
 
             for (uint32_t b = range->m_first; b <= range->m_last; b++) {
@@ -2669,10 +2670,12 @@ int32_t CM2Model::SetIndices() {
                 M2SkinSection* section = &skin->m_skinSections[sectionIndex];
 
                 if (copyIndices || singleBone) {
-                    memcpy(indices, &skin->m_indices[section->m_indexStart], section->m_indexCount * sizeof(uint16_t));
+                    memcpy(indices, &skin->m_indices[M2SkinSectionIndexStart(*skin, *section)], section->m_indexCount * sizeof(uint16_t));
                 } else {
+                    uint32_t start = M2SkinSectionIndexStart(*skin, *section);
+
                     for (uint32_t j = 0; j < section->m_indexCount; j++) {
-                        indices[j] = vertexBase + skin->m_indices[j + section->m_indexStart] - section->m_vertexStart;
+                        indices[j] = vertexBase + skin->m_indices[j + start] - section->m_vertexStart;
                     }
                 }
 
@@ -2702,7 +2705,7 @@ int32_t CM2Model::SetVertices(int32_t optimized, M2SkinSection* section, int32_t
 
     if (optimized) {
         M2SkinProfile* skin = this->m_shared->m_skinData;
-        M2BatchRange* range = &this->m_optGeo->m_batchRanges[section->m_skinSectionId];
+        M2BatchRange* range = &this->m_optGeo->m_batchRanges[section->m_skinSectionId & 0xFFFF];
 
         for (uint32_t b = range->m_first; b <= range->m_last; b++) {
             uint16_t sectionIndex = skin->m_batches[b].m_skinSectionIndex;
@@ -2888,7 +2891,7 @@ void CM2Model::RenderModelBatchesForProjectedTexture() {
 
             CGxBatch gxBatch;
             gxBatch.m_primType = GxPrim_Triangles;
-            gxBatch.m_start = section->m_indexStart;
+            gxBatch.m_start = M2SkinSectionDrawStart(*section);
             gxBatch.m_count = section->m_indexCount;
             gxBatch.m_minIndex = 0;
             gxBatch.m_maxIndex = this->m_shared->m_skinData->m_vertices.m_count - 1;
@@ -2937,7 +2940,7 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
 
     CGxBatch gxBatch;
     gxBatch.m_primType = GxPrim_Triangles;
-    gxBatch.m_start = section->m_indexStart;
+    gxBatch.m_start = M2SkinSectionDrawStart(*section);
     gxBatch.m_count = 0;
     gxBatch.m_minIndex = 0;
     gxBatch.m_maxIndex = 0;
@@ -4032,7 +4035,7 @@ void CM2Model::SetGeometryVisible(uint32_t first, uint32_t last, int32_t visible
         int32_t changed = 0;
 
         for (uint32_t i = 0; i < skin->m_skinSections.m_count; i++) {
-            uint32_t id = skin->m_skinSections[i].m_skinSectionId;
+            uint32_t id = M2SkinSectionGeosetId(*skin, skin->m_skinSections[i]);
 
             if (first <= id && id <= last) {
                 uint32_t* section = &this->m_skinSections[i];
@@ -4242,11 +4245,11 @@ void CM2Model::OptimizeVisibleGeometry() {
             int32_t indexStart = indexStarts[batch->m_skinSectionIndex];
 
             if (indexStart < 0) {
-                indexStart = static_cast<uint16_t>(indexCount);
+                indexStart = static_cast<int32_t>(indexCount);
                 indexStarts[batch->m_skinSectionIndex] = indexCount;
             }
 
-            target->m_indexStart = indexStart;
+            M2SkinSectionSetDrawStart(*target, static_cast<uint32_t>(indexStart));
 
             if (!keepVertices) {
                 target->m_vertexStart = 0;
@@ -4507,7 +4510,7 @@ int32_t CM2Model::SetVerticesMultiSample(int32_t optimized, M2SkinSection* secti
 
     if (optimized) {
         M2SkinProfile* skin = this->m_shared->m_skinData;
-        M2BatchRange* range = &this->m_optGeo->m_batchRanges[section->m_skinSectionId];
+        M2BatchRange* range = &this->m_optGeo->m_batchRanges[section->m_skinSectionId & 0xFFFF];
 
         for (uint32_t b = range->m_first; b <= range->m_last; b++) {
             uint16_t sectionIndex = skin->m_batches[b].m_skinSectionIndex;
@@ -4679,6 +4682,7 @@ void CM2Model::AnimateMTSimple(const C44Matrix* view, const C3Vector& diffuse, c
     uint32_t flags = this->m_fFlags;
 
     if (!(flags & 1) || this->m_frameStamp == this->m_scene->m_frameStamp) {
+        wxl::seam::M2::AnimateMTSimple::After(this, view, &diffuse, &emissive, alpha, alpha2);
         return;
     }
 
@@ -4800,6 +4804,8 @@ void CM2Model::AnimateMTSimple(const C44Matrix* view, const C3Vector& diffuse, c
     }
 
     *this->m_boneMatrices = this->m_matrixF4;
+
+    wxl::seam::M2::AnimateMTSimple::After(this, view, &diffuse, &emissive, alpha, alpha2);
 
     for (uint32_t i = 0; i < data->m_textureWeights.m_count; i++) {
         M2TextureWeight* weight = &data->m_textureWeights[i];
@@ -5028,12 +5034,14 @@ void CM2Model::GetCollisionFacets(const CAaBox& box, const C44Matrix& transform,
     }
 }
 
+
 // VERIFY: d48ec2da manual
 // OFFSET: 0x0082F0F0
 void CM2Model::AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C3Vector& emissive, float alpha, float alpha2) {
     uint32_t flags = this->m_fFlags;
 
     if (!(flags & 1) || this->m_frameStamp == this->m_scene->m_frameStamp) {
+        wxl::seam::M2::AnimateMT::After(this, view, &diffuse, &emissive, alpha, alpha2);
         return;
     }
 
@@ -5521,6 +5529,8 @@ void CM2Model::AnimateMT(const C44Matrix* view, const C3Vector& diffuse, const C
             boneMatrix.d3 = 1.0f;
         }
     }
+
+    wxl::seam::M2::AnimateMT::After(this, view, &diffuse, &emissive, alpha, alpha2);
 
     for (uint32_t i = 0; i < data->m_colors.m_count; i++) {
         M2Color* colorData = &data->m_colors[i];
@@ -7776,7 +7786,9 @@ int32_t CM2Model::Initialize(CM2Scene* scene, CM2Shared* shared, CM2Model* sourc
             CM2Model* copy = this->m_scene->DuplicateModel(child, 0);
 
             if (copy) {
-                copy->AttachToParent(this, child->m_attachmentId, nullptr, 0);
+                // WarcraftXL: a child attached to the root (0x40000) stays attached to the root,
+                // or a copy of a parent without that point would drop it.
+                copy->AttachToParent(this, child->m_attachmentId, nullptr, (child->m_fFlags & 0x40000) ? 1 : 0);
 
                 if (copy->m_refCount-- == 1) {
                     g_modelPool->Delete(copy);

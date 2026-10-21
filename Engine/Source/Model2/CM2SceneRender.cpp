@@ -19,6 +19,7 @@
 #include "Engine/Source/Tempest/C4Vector.h"
 #include "Engine/Source/Tempest/CMath.h"
 #include "Engine/Source/Tempest/CImVector.h"
+#include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00A45390
 const uint32_t s_fogModes[7] = { 1, 1, 1, 2, 2, 3, 4 };
@@ -463,7 +464,7 @@ void CM2SceneRender::DrawBatch() {
 
     CGxBatch batch;
     batch.m_primType = GxPrim_Triangles;
-    batch.m_start = this->m_curSkinSection->m_indexStart;
+    batch.m_start = M2SkinSectionDrawStart(*this->m_curSkinSection);
     batch.m_count = this->m_curSkinSection->m_indexCount;
 
     if (CShaderEffect::s_enableShaders) {
@@ -489,6 +490,8 @@ void CM2SceneRender::DrawBatch() {
         batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
         g_theGxDevicePtr->Draw(&batch, 1);
     }
+
+    wxl::seam::M2::DrawBatch::After(this);
 }
 
 // VERIFY: eebe62d2 manual
@@ -609,7 +612,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
 
     CGxBatch batch;
     batch.m_primType = GxPrim_Triangles;
-    batch.m_start = this->m_curSkinSection->m_indexStart;
+    batch.m_start = M2SkinSectionDrawStart(*this->m_curSkinSection);
     batch.m_count = 0;
     batch.m_minIndex = 0;
     batch.m_maxIndex = 0;

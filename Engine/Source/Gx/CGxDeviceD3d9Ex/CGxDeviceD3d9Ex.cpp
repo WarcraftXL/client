@@ -2157,6 +2157,14 @@ void CGxDeviceD3d9Ex::IXformSetViewport() {
     }
 
     this->m_d3dDevice->SetViewport(&viewport);
+
+    // WarcraftXL: kept for wxl.gx (Gx.h).
+    g_gxLastIndexedDraw.viewport[0] = viewport.X;
+    g_gxLastIndexedDraw.viewport[1] = viewport.Y;
+    g_gxLastIndexedDraw.viewport[2] = viewport.Width;
+    g_gxLastIndexedDraw.viewport[3] = viewport.Height;
+    g_gxLastIndexedDraw.viewportZ[0] = viewport.MinZ;
+    g_gxLastIndexedDraw.viewportZ[1] = viewport.MaxZ;
     this->m_viewportDirty = 0;
 }
 
@@ -3098,6 +3106,15 @@ void CGxDeviceD3d9Ex::Draw(CGxBatch* batch, int32_t count) {
     if (count) {
         uint32_t primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
         this->m_d3dDevice->DrawIndexedPrimitive(s_primitiveConversion[batch->m_primType], baseVertexIndex, batch->m_minIndex, batch->m_maxIndex - batch->m_minIndex + 1, batch->m_start + (this->m_primIndexBuf->m_index >> 1), primCount);
+
+        // WarcraftXL: kept for wxl.gx (Gx.h).
+        g_gxLastIndexedDraw.primType = s_primitiveConversion[batch->m_primType];
+        g_gxLastIndexedDraw.baseVertex = static_cast<int32_t>(baseVertexIndex);
+        g_gxLastIndexedDraw.minIndex = batch->m_minIndex;
+        g_gxLastIndexedDraw.vertexCount = batch->m_maxIndex - batch->m_minIndex + 1;
+        g_gxLastIndexedDraw.startIndex = batch->m_start + (this->m_primIndexBuf->m_index >> 1);
+        g_gxLastIndexedDraw.primCount = primCount;
+        g_gxLastIndexedDraw.serial++;
     } else {
         uint32_t primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
         this->m_d3dDevice->DrawPrimitive(s_primitiveConversion[batch->m_primType], baseVertexIndex, primCount);

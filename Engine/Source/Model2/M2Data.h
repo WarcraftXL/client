@@ -385,4 +385,39 @@ inline void M2Array<T>::Set(const T* data) {
     this->m_offset = data ? static_cast<uint32_t>(reinterpret_cast<uintptr_t>(data) - reinterpret_cast<uintptr_t>(this)) : 0;
 }
 
+// WIDE SKIN INDICES (not in the original client)
+//
+// A submesh's first index is a 16-bit field, so a skin of more than 65535 indices cannot say where
+// a submesh past that begins on its own. Later skins give the high half in the top 16 bits of the
+// section's id ("level"), which the 3.3.5 files used as an occasional LOD marker. The high half is
+// taken only when the window it names lies inside the skin's own index array: a marker names one it
+// cannot contain, and the 16-bit start stands, so a stock skin reads exactly as before.
+inline uint32_t M2SkinSectionIndexStart(const M2SkinProfile& skin, const M2SkinSection& section) {
+    uint32_t wide = (section.m_skinSectionId & 0xFFFF0000u) | section.m_indexStart;
+    uint32_t count = skin.m_indices.m_count;
+
+    if (wide != section.m_indexStart && wide <= count && section.m_indexCount <= count - wide) {
+        return wide;
+    }
+
+    return section.m_indexStart;
+}
+
+// The geoset id a skin's section answers to: without the high half of its first index.
+inline uint32_t M2SkinSectionGeosetId(const M2SkinProfile& skin, const M2SkinSection& section) {
+    return M2SkinSectionIndexStart(skin, section) != section.m_indexStart ? (section.m_skinSectionId & 0xFFFFu) : section.m_skinSectionId;
+}
+
+// The client's own copies of a section -- the shared index buffer's, an optimized geometry's --
+// carry their first index in the buffer the same way, the high half in the top of the id, which
+// none of them reads as one.
+inline uint32_t M2SkinSectionDrawStart(const M2SkinSection& section) {
+    return (section.m_skinSectionId & 0xFFFF0000u) | section.m_indexStart;
+}
+
+inline void M2SkinSectionSetDrawStart(M2SkinSection& section, uint32_t start) {
+    section.m_indexStart = static_cast<uint16_t>(start);
+    section.m_skinSectionId = (section.m_skinSectionId & 0xFFFFu) | (start & 0xFFFF0000u);
+}
+
 #endif

@@ -653,7 +653,7 @@ M2HitRec* CM2Scene::HitTestGeometry(const CM2Model* model, uint32_t pass, const 
             this->TransformHitTestVerticesBlend(model, skinData, section, pass, dir, d);
         }
 
-        const uint16_t* indices = &skinData->m_indices[section->m_indexStart];
+        const uint16_t* indices = &skinData->m_indices[M2SkinSectionIndexStart(*skinData, *section)];
         best = this->IntersectHitTestTriangles(indices, indices + section->m_indexCount, section->m_vertexStart, start, pass, rec, t, best);
     }
 

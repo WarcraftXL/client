@@ -113,6 +113,9 @@ static void (*s_drawListPreprocess[GxuSorts_Last])(GxDrawListEntry*, const C3Vec
 // STATIC: 0x00AD88B0
 static int (*s_drawListSorters[GxuSorts_Last])(const void*, const void*) = { DrawListSorterB2F, DrawListSorterVtxStream };
 
+// WarcraftXL: see Gx.h.
+GxD3dIndexedDraw g_gxLastIndexedDraw = {};
+
 // VERIFY: 0b88acbc auto
 // OFFSET: 0x008C8DE0
 EGxApi GxDefaultApi() {

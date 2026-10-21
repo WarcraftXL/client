@@ -4,12 +4,25 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <vector>
 
 #include "Engine/Source/Base/CDataStore.h"
 #include "Engine/Source/BlizzardCore/SFile2-Core.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.h"
+#include "Engine/Source/Gx/CGxDeviceD3d9Ex/CGxDeviceD3d9Ex.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Model2/CM2SceneRender.h"
+#include "Engine/Source/Model2/M2Model.h"
+#include "Engine/Source/Model2/M2Scene.h"
+#include "Engine/Source/Model2/M2Shared.h"
+#include "Engine/Source/Base/Handle.h"
+#include "Engine/Source/Base/Status.h"
+#include "WoW/Common/ComponentCore/CharacterComponent.h"
+#include "WoW/Source/DB/DBClient/DBClient.h"
+#include "WoW/Source/DB/Rec/ChrRacesRec.h"
+#include "WoW/Source/DB/Rec/ItemDisplayInfoRec.h"
 #include "Engine/Source/Tempest/CRect.h"
 #include "Engine/Source/Tempest/C3Vector.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
@@ -395,5 +408,441 @@ namespace WarcraftXL::Binding {
         *width = w > 0.0f ? static_cast<uint32_t>(w + 0.5f) : 0u;
         *height = h > 0.0f ? static_cast<uint32_t>(h + 0.5f) : 0u;
         return WXL_TRUE;
+    }
+
+    // --- unit.def: how one unit regards another ------------------------------------------------
+
+    int32_t WXL_CALL unit_reaction(const void* unit, const void* other) {
+        return static_cast<const CGUnit_C*>(unit)->UnitReaction(static_cast<const CGUnit_C*>(other));
+    }
+
+    // --- Gx: wxl.gx ---------------------------------------------------------------------------
+    // Both D3D9 devices keep the same copy of what they last set (m_deviceStates, the current
+    // declaration and streams); invalidating it makes the next IStateSync send everything again.
+
+    void* WXL_CALL gx_d3d9_device(void) {
+        if (!g_theGxDevicePtr) {
+            return nullptr;
+        }
+        switch (g_theGxDevicePtr->DeviceApi()) {
+            case GxApi_D3d9:
+                return static_cast<CGxDeviceD3d*>(g_theGxDevicePtr)->m_d3dDevice;
+            case GxApi_D3d9Ex:
+                return static_cast<CGxDeviceD3d9Ex*>(g_theGxDevicePtr)->m_d3dDevice;
+            default:
+                return nullptr;
+        }
+    }
+
+    template <class Device>
+    void InvalidateD3d(Device* device) {
+        device->IRsForceUpdate();
+        std::memset(device->m_deviceStates, 0xA5, sizeof device->m_deviceStates);
+        device->m_d3dCurrentVertexDecl = nullptr;
+        std::memset(device->m_d3dVertexStreamBuf, 0, sizeof device->m_d3dVertexStreamBuf);
+        device->m_viewportDirty = 1;
+        device->m_scissorRectDirty = 1;
+    }
+
+    void WXL_CALL gx_invalidate_state(void) {
+        if (!g_theGxDevicePtr) {
+            return;
+        }
+        switch (g_theGxDevicePtr->DeviceApi()) {
+            case GxApi_D3d9:
+                InvalidateD3d(static_cast<CGxDeviceD3d*>(g_theGxDevicePtr));
+                break;
+            case GxApi_D3d9Ex:
+                InvalidateD3d(static_cast<CGxDeviceD3d9Ex*>(g_theGxDevicePtr));
+                break;
+            default:
+                break;
+        }
+    }
+
+    CM2Model* RootModel(CM2Model* model) {
+        // Bounded: an attachment chain is a few links (weapon, rider, mount).
+        for (int32_t i = 0; model && model->m_attachParent && i < 16; i++) {
+            model = model->m_attachParent;
+        }
+        return model;
+    }
+
+    void* WXL_CALL gx_object_model(const void* object) {
+        return RootModel(Object(object)->m_worldModel);
+    }
+
+    wxl_bool WXL_CALL gx_model_draw(const void* render, wxl_gx_model_draw* out) {
+        // A batch the device did not draw (no context, a lost device) leaves the serial as it was.
+        static uint32_t s_reported = 0;
+        const CM2SceneRender* r = static_cast<const CM2SceneRender*>(render);
+        if (!out || !r->m_curModel || g_gxLastIndexedDraw.serial == s_reported) {
+            return WXL_FALSE;
+        }
+        s_reported = g_gxLastIndexedDraw.serial;
+        out->model = r->m_curModel;
+        out->root_model = RootModel(r->m_curModel);
+        out->primitive_type = g_gxLastIndexedDraw.primType;
+        out->base_vertex = g_gxLastIndexedDraw.baseVertex;
+        out->min_index = g_gxLastIndexedDraw.minIndex;
+        out->vertex_count = g_gxLastIndexedDraw.vertexCount;
+        out->start_index = g_gxLastIndexedDraw.startIndex;
+        out->primitive_count = g_gxLastIndexedDraw.primCount;
+        out->blend_mode = r->m_curMaterial ? r->m_curMaterial->m_blendMode : 0u;
+        out->viewport_x = g_gxLastIndexedDraw.viewport[0];
+        out->viewport_y = g_gxLastIndexedDraw.viewport[1];
+        out->viewport_width = g_gxLastIndexedDraw.viewport[2];
+        out->viewport_height = g_gxLastIndexedDraw.viewport[3];
+        out->viewport_min_z = g_gxLastIndexedDraw.viewportZ[0];
+        out->viewport_max_z = g_gxLastIndexedDraw.viewportZ[1];
+        return WXL_TRUE;
+    }
+
+    // --- M2: wxl.m2 -----------------------------------------------------------------------------
+
+    wxl_bool WXL_CALL component_wearer(const void* component, uint32_t item_slot, wxl_m2_equipment* out) {
+        if (!component || !out) {
+            return WXL_FALSE;
+        }
+        const CCharacterComponent* c = static_cast<const CCharacterComponent*>(component);
+        out->wearer = const_cast<void*>(component);
+        out->model = c->m_data.m_model;
+        out->race_id = c->m_data.m_preferences.m_raceID;
+        out->sex_id = c->m_data.m_preferences.m_sexID;
+        out->item_slot = item_slot;
+        out->display_id = item_slot < NUM_ITEM_SLOTS ? c->m_itemDisplayID[item_slot] : 0u;
+        out->npc = (c->m_data.m_flags & 0x1) ? WXL_TRUE : WXL_FALSE;
+        return WXL_TRUE;
+    }
+
+    const char* Text(const char* text) {
+        return text ? text : "";
+    }
+
+    wxl_bool WXL_CALL m2_item_display(uint32_t id, wxl_m2_item_display* out) {
+        ItemDisplayInfoRec rec;
+        if (!out || !id || !g_itemDisplayInfoDB.GetRecord(static_cast<int32_t>(id), &rec)) {
+            return WXL_FALSE;
+        }
+        out->id = static_cast<uint32_t>(rec.m_id);
+        for (int32_t i = 0; i < 2; i++) {
+            out->model[i] = Text(rec.m_modelName[i]);
+            out->model_texture[i] = Text(rec.m_modelTexture[i]);
+            out->icon[i] = Text(rec.m_inventoryIcon[i]);
+            out->helmet_geoset_vis[i] = static_cast<uint32_t>(rec.m_helmetGeosetVisID[i]);
+        }
+        for (int32_t i = 0; i < 3; i++) {
+            out->geoset_group[i] = static_cast<uint32_t>(rec.m_geosetGroup[i]);
+        }
+        for (int32_t i = 0; i < 8; i++) {
+            out->texture[i] = Text(rec.m_texture[i]);
+        }
+        out->flags = static_cast<uint32_t>(rec.m_flags);
+        out->spell_visual_id = static_cast<uint32_t>(rec.m_spellVisualID);
+        out->group_sound_index = static_cast<uint32_t>(rec.m_groupSoundIndex);
+        out->item_visual = rec.m_itemVisual;
+        out->particle_color_id = static_cast<uint32_t>(rec.m_particleColorID);
+        return WXL_TRUE;
+    }
+
+    const char* WXL_CALL m2_race_prefix(uint32_t race) {
+        const ChrRacesRec* rec = g_chrRacesDB.GetRecord(static_cast<int32_t>(race));
+        return rec ? rec->m_clientPrefix : nullptr;
+    }
+
+    void* WXL_CALL m2_create_model(void* scene_model, const char* path) {
+        CM2Model* parent = static_cast<CM2Model*>(scene_model);
+        if (!parent || !parent->m_scene || !path || !*path) {
+            return nullptr;
+        }
+        return parent->m_scene->CreateModel(path, 0);
+    }
+
+    void WXL_CALL m2_release_model(void* model) {
+        if (model) {
+            static_cast<CM2Model*>(model)->Release();
+        }
+    }
+
+    wxl_bool WXL_CALL m2_attach_model(void* model, void* parent, uint32_t attachment, wxl_bool to_root) {
+        CM2Model* child = static_cast<CM2Model*>(model);
+        CM2Model* to = static_cast<CM2Model*>(parent);
+        if (!child || !to || child == to) {
+            return WXL_FALSE;
+        }
+        // AttachToParent drops a request for a point a loaded parent lacks without saying so.
+        if (!to_root && (to->m_fFlags & 1)) {
+            M2Data* data = to->m_shared->m_data;
+            uint32_t index = attachment < data->m_attachmentIndicesById.m_count ? data->m_attachmentIndicesById[attachment] : 0xFFFF;
+            if (index == 0xFFFF) {
+                return WXL_FALSE;
+            }
+        }
+        child->AttachToParent(to, attachment, nullptr, to_root ? 1 : 0);
+        return child->m_attachParent == to ? WXL_TRUE : WXL_FALSE;
+    }
+
+    void WXL_CALL m2_detach_model(void* model) {
+        CM2Model* child = static_cast<CM2Model*>(model);
+        if (child && child->m_attachParent) {
+            child->DetachFromParent();
+        }
+    }
+
+    void* WXL_CALL m2_model_parent(const void* model) {
+        return model ? static_cast<const CM2Model*>(model)->m_attachParent : nullptr;
+    }
+
+    void* WXL_CALL m2_model_source(const void* model) {
+        return model ? static_cast<const CM2Model*>(model)->m_model30 : nullptr;
+    }
+
+    void WXL_CALL m2_set_geosets(void* model, uint32_t first, uint32_t last, wxl_bool visible) {
+        if (model) {
+            static_cast<CM2Model*>(model)->SetGeometryVisible(first, last, visible ? 1 : 0);
+        }
+    }
+
+    wxl_bool WXL_CALL m2_replace_texture(void* model, uint32_t type, const char* path) {
+        static CStatus s_status;
+        if (!model || !path || !*path) {
+            return WXL_FALSE;
+        }
+        CTexture* texture = CreateTexture(path, &s_status);
+        if (!texture) {
+            return WXL_FALSE;
+        }
+        // The model takes a handle of its own, as CCharacterComponent::AddLink relies on.
+        static_cast<CM2Model*>(model)->ReplaceTexture(type, texture);
+        HandleClose(reinterpret_cast<HOBJECT>(texture));
+        return WXL_TRUE;
+    }
+
+    // Which parent bone each child bone takes its pose from, for one pair of model files: by key
+    // bone id first, then by name, and a bone matching neither takes its nearest matched
+    // ancestor's. Each animate thread keeps the last few pairs it built; a pair is rebuilt when
+    // either file's bone count no longer agrees, which is all a recycled file can be told by.
+    struct BoneMap {
+        const M2Data* child = nullptr;
+        const M2Data* parent = nullptr;
+        uint32_t childCount = 0;
+        uint32_t parentCount = 0;
+        bool matched = false;
+        std::vector<uint16_t> parentOf;
+    };
+
+    const BoneMap& MapBones(const M2Data* child, const M2Data* parent) {
+        thread_local BoneMap s_maps[8];
+        thread_local uint32_t s_next = 0;
+
+        const uint32_t childCount = child->m_bones.m_count;
+        const uint32_t parentCount = parent->m_bones.m_count;
+        for (const BoneMap& map : s_maps) {
+            if (map.child == child && map.parent == parent && map.childCount == childCount && map.parentCount == parentCount) {
+                return map;
+            }
+        }
+
+        BoneMap& map = s_maps[s_next++ % 8];
+        map.child = child;
+        map.parent = parent;
+        map.childCount = childCount;
+        map.parentCount = parentCount;
+        map.matched = false;
+        map.parentOf.assign(childCount, 0xFFFF);
+
+        for (uint32_t i = 0; i < childCount; i++) {
+            const M2CompBone& bone = child->m_bones[i];
+            uint16_t found = 0xFFFF;
+            const int32_t key = static_cast<int32_t>(bone.m_boneId);
+            if (key >= 0 && static_cast<uint32_t>(key) < parent->m_boneIndicesById.m_count) {
+                const uint16_t index = parent->m_boneIndicesById[static_cast<uint32_t>(key)];
+                if (index < parentCount) {
+                    found = index;
+                }
+            }
+            if (found == 0xFFFF && bone.m_boneNameCRC) {
+                for (uint32_t j = 0; j < parentCount; j++) {
+                    if (parent->m_bones[j].m_boneNameCRC == bone.m_boneNameCRC) {
+                        found = static_cast<uint16_t>(j);
+                        break;
+                    }
+                }
+            }
+            if (found != 0xFFFF) {
+                map.matched = true;
+            } else {
+                // A retail piece names leg and arm bones by key bones a 3.3.5 body lacks (thighs,
+                // knees, shins: 55-58, 70-75). The body has those bones under other ids, at the
+                // same place: take the body bone nearest this bone's pivot among the descendants of
+                // its nearest matched ancestor's counterpart (the whole body for none).
+                const uint16_t ancestor = bone.m_parentIndex < i ? map.parentOf[bone.m_parentIndex] : 0xFFFF;
+                float best = 3.4e38f;
+                for (uint32_t j = 0; j < parentCount; j++) {
+                    if (ancestor != 0xFFFF) {
+                        uint32_t walk = j;
+                        for (uint32_t depth = 0; walk != ancestor && walk < parentCount && depth < parentCount; depth++) {
+                            walk = parent->m_bones[walk].m_parentIndex;
+                        }
+                        if (walk != ancestor) {
+                            continue;
+                        }
+                    }
+                    const C3Vector& a = bone.m_pivot;
+                    const C3Vector& b = parent->m_bones[j].m_pivot;
+                    const float d = (a.x - b.x) * (a.x - b.x) + (a.y - b.y) * (a.y - b.y) + (a.z - b.z) * (a.z - b.z);
+                    if (d < best) {
+                        best = d;
+                        found = static_cast<uint16_t>(j);
+                    }
+                }
+                if (found == 0xFFFF) {
+                    found = ancestor;
+                }
+            }
+            map.parentOf[i] = found;
+        }
+        return map;
+    }
+
+    wxl_bool WXL_CALL m2_pose_from_parent(void* model) {
+        CM2Model* child = static_cast<CM2Model*>(model);
+        CM2Model* parent = child ? child->m_attachParent : nullptr;
+        if (!parent || !(child->m_fFlags & 1) || !(parent->m_fFlags & 1) || !child->m_boneMatrices || !parent->m_boneMatrices) {
+            return WXL_FALSE;
+        }
+        const BoneMap& map = MapBones(child->m_shared->m_data, parent->m_shared->m_data);
+        if (!map.matched) {
+            return WXL_FALSE;
+        }
+        // Both are in view space: the parent's posed body is the child's, bone for bone.
+        for (uint32_t i = 0; i < map.childCount; i++) {
+            if (map.parentOf[i] != 0xFFFF) {
+                child->m_boneMatrices[i] = parent->m_boneMatrices[map.parentOf[i]];
+            }
+        }
+        return WXL_TRUE;
+    }
+
+    uint32_t WXL_CALL m2_children(const void* model, void** out, uint32_t capacity) {
+        uint32_t count = 0;
+        for (CM2Model* child = model ? static_cast<const CM2Model*>(model)->m_attachList : nullptr; child; child = child->m_attachNext) {
+            if (out && count < capacity) {
+                out[count] = child;
+            }
+            count++;
+        }
+        return count;
+    }
+
+    wxl_bool WXL_CALL m2_attach_info(const void* model, uint32_t* attachment, wxl_bool* to_root) {
+        const CM2Model* child = static_cast<const CM2Model*>(model);
+        if (!child || !child->m_attachParent || !attachment || !to_root) {
+            return WXL_FALSE;
+        }
+        *attachment = child->m_attachmentId;
+        *to_root = (child->m_fFlags & 0x40000) ? WXL_TRUE : WXL_FALSE;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL m2_attach_copy(void* source, void* parent, uint32_t attachment, wxl_bool to_root) {
+        CM2Model* from = static_cast<CM2Model*>(source);
+        CM2Model* to = static_cast<CM2Model*>(parent);
+        if (!from || !to || !to->m_scene) {
+            return WXL_FALSE;
+        }
+        CM2Model* copy = to->m_scene->DuplicateModel(from, 0);
+        if (!copy) {
+            return WXL_FALSE;
+        }
+        copy->AttachToParent(to, attachment, nullptr, to_root ? 1 : 0);
+        const wxl_bool attached = copy->m_attachParent == to ? WXL_TRUE : WXL_FALSE;
+        copy->Release(); // the parent holds it now, as CM2Model::Initialize leaves its copies
+        return attached;
+    }
+
+    void* WXL_CALL m2_model_file(const void* model) {
+        return model ? static_cast<const CM2Model*>(model)->m_shared : nullptr;
+    }
+
+    wxl_bool WXL_CALL m2_attachment_point(const void* model, uint32_t attachment, wxl_vec3* out) {
+        const CM2Model* m = static_cast<const CM2Model*>(model);
+        if (!m || !out || !(m->m_fFlags & 1)) {
+            return WXL_FALSE;
+        }
+        const M2Data* data = m->m_shared->m_data;
+        const uint32_t index = attachment < data->m_attachmentIndicesById.m_count ? data->m_attachmentIndicesById[attachment] : 0xFFFF;
+        if (index >= data->m_attachments.m_count) {
+            return WXL_FALSE;
+        }
+        const C3Vector& position = data->m_attachments[index].m_position;
+        out->x = position.x;
+        out->y = position.y;
+        out->z = position.z;
+        return WXL_TRUE;
+    }
+
+    uint16_t KeyBoneIndex(const CM2Model* model, uint32_t key) {
+        const M2Data* data = model->m_shared->m_data;
+        if (key >= data->m_boneIndicesById.m_count) {
+            return 0xFFFF;
+        }
+        const uint16_t index = data->m_boneIndicesById[key];
+        return index < data->m_bones.m_count ? index : 0xFFFF;
+    }
+
+    wxl_bool WXL_CALL m2_has_key_bone(const void* model, uint32_t key_bone) {
+        const CM2Model* m = static_cast<const CM2Model*>(model);
+        if (!m) {
+            return WXL_FALSE;
+        }
+        return !(m->m_fFlags & 1) || KeyBoneIndex(m, key_bone) != 0xFFFF ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL m2_pose_on_bone(void* model, uint32_t key_bone, const wxl_vec3* offset) {
+        CM2Model* child = static_cast<CM2Model*>(model);
+        CM2Model* parent = child ? child->m_attachParent : nullptr;
+        if (!parent || !offset || !(child->m_fFlags & 1) || !(parent->m_fFlags & 1) || !child->m_boneMatrices || !parent->m_boneMatrices) {
+            return WXL_FALSE;
+        }
+        const uint16_t bone = KeyBoneIndex(parent, key_bone);
+        if (bone == 0xFFFF) {
+            return WXL_FALSE;
+        }
+        // What CM2Model::AnimateAttachmentsMT hands an attachment: its bone, moved to the point.
+        C44Matrix matrix = parent->m_boneMatrices[bone];
+        matrix.Translate(C3Vector(offset->x, offset->y, offset->z));
+        const uint32_t count = child->m_shared->m_data->m_bones.m_count;
+        for (uint32_t i = 0; i < count; i++) {
+            child->m_boneMatrices[i] = matrix;
+        }
+        return WXL_TRUE;
+    }
+
+    // --- M2: wxl.m2file -------------------------------------------------------------------------
+
+    wxl_bool WXL_CALL m2_file_info(const void* file, wxl_m2file* out) {
+        const CM2Shared* shared = static_cast<const CM2Shared*>(file);
+        if (!shared || !out || !shared->m_data) {
+            return WXL_FALSE;
+        }
+        out->name = shared->m_fileName;
+        out->data = shared->m_data;
+        out->size = shared->m_fileSize;
+        out->skin = shared->m_skinData;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL m2_file_set_size(void* file, uint32_t size) {
+        CM2Shared* shared = static_cast<CM2Shared*>(file);
+        if (shared && size <= shared->m_fileSize) {
+            shared->m_fileSize = size;
+        }
+    }
+
+    void WXL_CALL m2_file_animate_bones(void* file) {
+        if (CM2Shared* shared = static_cast<CM2Shared*>(file)) {
+            shared->m_billboardBoneCount++;
+        }
     }
 }

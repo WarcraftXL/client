@@ -350,13 +350,41 @@ void OsFindTextSectionBounds() {
     s_textEnd = header->OptionalHeader.ImageBase + sections[i].VirtualAddress + sections[i].Misc.VirtualSize;
 }
 
+// WarcraftXL: the functions mods register through wxl.script reach Lua as WarcraftXL.dll's
+// thunk, so the runtime's .text is code the client may call too.
+static bool OsIsRuntimeCode(const void* ptr) {
+    static uintptr_t s_runtimeStart;
+    static uintptr_t s_runtimeEnd;
+
+    if (!s_runtimeEnd) {
+        uint8_t* image = reinterpret_cast<uint8_t*>(GetModuleHandleW(L"WarcraftXL.dll"));
+
+        if (!image) {
+            return false;
+        }
+
+        IMAGE_NT_HEADERS* header = reinterpret_cast<IMAGE_NT_HEADERS*>(image + reinterpret_cast<IMAGE_DOS_HEADER*>(image)->e_lfanew);
+        IMAGE_SECTION_HEADER* sections = IMAGE_FIRST_SECTION(header);
+
+        for (uint16_t i = 0; i < header->FileHeader.NumberOfSections; i++) {
+            if (!strncmp(reinterpret_cast<const char*>(sections[i].Name), ".text", 8)) {
+                s_runtimeStart = reinterpret_cast<uintptr_t>(image) + sections[i].VirtualAddress;
+                s_runtimeEnd = s_runtimeStart + sections[i].Misc.VirtualSize;
+                break;
+            }
+        }
+    }
+
+    return reinterpret_cast<uintptr_t>(ptr) >= s_runtimeStart && reinterpret_cast<uintptr_t>(ptr) < s_runtimeEnd;
+}
+
 // OFFSET: 0x0086B5A0
 void OsValidateFunctionPointer(const void* ptr) {
     if (!s_textStart || !s_textEnd) {
         OsFindTextSectionBounds();
     }
 
-    if (reinterpret_cast<uintptr_t>(ptr) < s_textStart || reinterpret_cast<uintptr_t>(ptr) >= s_textEnd) {
+    if ((reinterpret_cast<uintptr_t>(ptr) < s_textStart || reinterpret_cast<uintptr_t>(ptr) >= s_textEnd) && !OsIsRuntimeCode(ptr)) {
         char buffer[64];
         SStrPrintf(buffer, sizeof(buffer), "Invalid function pointer: %p", ptr);
         SErrDisplayAppFatal(buffer);
