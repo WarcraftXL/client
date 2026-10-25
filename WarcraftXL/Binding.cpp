@@ -183,7 +183,7 @@ namespace {
 void WarcraftXLAnswerDuel(WOWGUID arbiter, WOWGUID challenger, bool accept);
 int32_t WarcraftXLNextLootRollId();
 uint32_t WarcraftXLEvictModels(const char* leaf, void** out, uint32_t capacity);
-uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy);
+uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy, uint32_t* atlas);
 
 namespace WarcraftXL::Binding {
     // --- the field rows, generated from the table --------------------------------------------
@@ -1203,8 +1203,8 @@ namespace WarcraftXL::Binding {
         return WXL_TRUE;
     }
 
-    uint32_t WXL_CALL texture_reload(const char* name, uint32_t* busy) {
-        return WarcraftXLReloadTextures(name, busy);
+    uint32_t WXL_CALL texture_reload(const char* name, uint32_t* busy, uint32_t* atlas) {
+        return WarcraftXLReloadTextures(name, busy, atlas);
     }
 
     const void* WXL_CALL map_obj_bytes(const void* map_obj, uint32_t* size) {

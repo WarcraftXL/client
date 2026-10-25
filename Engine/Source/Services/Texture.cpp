@@ -2576,10 +2576,15 @@ CTexture* TextureCreate(const char* fileName, CGxTexFlags texFlags, CStatus* sta
 // The textures WarcraftXL reads again in place so a file that changed shows (WarcraftXL/Binding.cpp,
 // texture_reload): every one of the list whose name is `name` (no extension, any case), its pixels
 // and device texture made again from `name`.blp by PumpBlpTextureAsync as CreateBlpSync makes
-// them. One still loading, or on the atlas, is left alone and counted in `busy`.
-uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy) {
+// them. One still loading is left alone and counted in `busy`, one held in a block of the
+// interface's atlas counted in `atlas`.
+uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy, uint32_t* atlas) {
     if (busy) {
         *busy = 0;
+    }
+
+    if (atlas) {
+        *atlas = 0;
     }
 
     if (!name || !*name) {
@@ -2599,9 +2604,18 @@ uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy) {
             continue;
         }
 
-        if (texture->m_asyncObject || texture->m_atlas || (texture->m_flags & 4)) {
+        if (texture->m_asyncObject) {
             if (busy) {
                 (*busy)++;
+            }
+
+            continue;
+        }
+
+        // A block of the interface's atlas is not a texture of its own: nothing to read again in place.
+        if (texture->m_atlas) {
+            if (atlas) {
+                (*atlas)++;
             }
 
             continue;
