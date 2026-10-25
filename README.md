@@ -192,7 +192,9 @@ NOTICE.md                provenance and what is, and is not, licensed
 
 Upstream's contributors are credited in [UPSTREAM.md](UPSTREAM.md). Tyrallis brought the model and
 appearance seams, skins over 65535 indices, the optional geometry's geoset ids and textures over
-4 MB (pull request #1).
+4 MB (pull request #1), then models of the world, bone watchers, the additive blend of later
+models, retail animation ids, Ogg Vorbis sounds and the geosets and eyes of later bodies (pull
+request #4).
 
 ## 📄 License
 
