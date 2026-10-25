@@ -18,10 +18,10 @@
 
 #pragma once
 
-#define WXL_POINT_COUNT 6u
+#define WXL_POINT_COUNT 7u
 
 /// "name: lowered" of every point in id order: the runtime compares them with its own table.
-#define WXL_POINT_ROWS { "CGCamera::UpdateCallback: i32(ptr,ptr)", "CM2Cache::CreateShared: ptr(ptr,ptr,u32)", "CGWorldFrame::RenderWorld: void(ptr)", "vFrameScript_SignalEvent: void(u32,ptr,ptr)", "NetClient::ProcessMessage: i32(ptr,u32,ptr,i32)", "CM2Shared::FinishLoading: i32(ptr)" }
+#define WXL_POINT_ROWS { "CGCamera::UpdateCallback: i32(ptr,ptr)", "CM2Cache::CreateShared: ptr(ptr,ptr,u32)", "CGWorldFrame::RenderWorld: void(ptr)", "vFrameScript_SignalEvent: void(u32,ptr,ptr)", "NetClient::ProcessMessage: i32(ptr,u32,ptr,i32)", "CM2Shared::FinishLoading: i32(ptr)", "M2Init(uint8_t*,uint32_t,M2Data&): i32(ptr,u32,ptr)" }
 
 #if defined(WXL_POINT_LIVE)
 
@@ -109,6 +109,20 @@
         }(p0);                                                                                                         \
     }
 
+// M2Init(uint8_t*,uint32_t,M2Data&) (i32(ptr,u32,ptr))
+#define WXL_POINT_6(p0, p1, p2) \
+    if (::wxl::point::Enters(6)) {                                                                                                                                     \
+        return [](uint8_t* wxl_a0, uint32_t wxl_a1, M2Data* wxl_a2) WXL_POINT_COLD -> int32_t {                                                                        \
+            int32_t wxl_result{};                                                                                                                                      \
+            void* const wxl_args[] = {&wxl_a0, &wxl_a1, &wxl_a2};                                                                                                      \
+            ::wxl::point::Enter(6, wxl_args, &wxl_result, [](void* const* wxl_a_, void* wxl_r_) {                                                                      \
+                const ::wxl::point::Bypass wxl_bypass(6);                                                                                                              \
+                *static_cast<int32_t*>(wxl_r_) = M2Init(*static_cast<uint8_t**>(wxl_a_[0]), *static_cast<uint32_t*>(wxl_a_[1]), **static_cast<M2Data**>(wxl_a_[2]));   \
+            });                                                                                                                                                        \
+            return wxl_result;                                                                                                                                         \
+        }(p0, p1, &p2);                                                                                                                                                \
+    }
+
 #else
 
 #define WXL_POINT_0(...) static_cast<void>(0)
@@ -117,5 +131,6 @@
 #define WXL_POINT_3(...) static_cast<void>(0)
 #define WXL_POINT_4(...) static_cast<void>(0)
 #define WXL_POINT_5(...) static_cast<void>(0)
+#define WXL_POINT_6(...) static_cast<void>(0)
 
 #endif

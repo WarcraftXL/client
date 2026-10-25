@@ -85,9 +85,38 @@ if (Python3_Interpreter_FOUND)
             COMMENT "Checking the SDK's update-field table against the fork"
             VERBATIM)
         add_dependencies(WorldClient wxl-fields-check)
+
+        # The SDK's engine headers are generated from this fork's types, measured by clang-cl for
+        # x86 and x64: generate_engine.py --check fails when one is not what the fork gives
+        # (EngineLayouts.gen.cpp also holds the x64 layouts to them at compile time).
+        add_custom_target(wxl-engine-check
+            COMMAND "${Python3_EXECUTABLE}" "${WXL_CORE_DIR}/tools/engine/generate_engine.py" --check
+                    --client "${CMAKE_SOURCE_DIR}" --sdk "${WXL_SDK_DIR}" --core "${WXL_CORE_DIR}"
+                    --clang-cl "${WXL_FIELDS_CLANG_CL}"
+            COMMENT "Checking the SDK's engine headers against the fork"
+            VERBATIM)
+        add_dependencies(WorldClient wxl-engine-check)
+
+        # The x86 runtime's recompiled bodies (core/src/deinlined/) are extracted from this fork;
+        # telling one template's instantiations apart reads the stock Wow.exe, so the check runs
+        # when one is named (WXL_WOW_EXE).
+        set(WXL_WOW_EXE "$ENV{WXL_WOW_EXE}" CACHE FILEPATH "A stock Wow.exe 12340, for the de-inlined bodies' check")
+        if (WXL_WOW_EXE)
+            add_custom_target(wxl-deinlined-check
+                COMMAND "${Python3_EXECUTABLE}" "${WXL_CORE_DIR}/tools/extract/extract.py" --deinlined --check
+                        --client "${CMAKE_SOURCE_DIR}" --sdk "${WXL_SDK_DIR}" --binary "${WXL_WOW_EXE}"
+                        --clang-cl "${WXL_FIELDS_CLANG_CL}"
+                COMMENT "Checking the x86 runtime's recompiled bodies against the fork"
+                VERBATIM)
+            add_dependencies(WorldClient wxl-deinlined-check)
+        else ()
+            message(STATUS "WXL_WOW_EXE is not set, so core's recompiled bodies (src/deinlined/) are not "
+                "checked against the fork in this build; run core/tools/extract/extract.py --deinlined --check.")
+        endif ()
     else ()
-        message(STATUS "clang-cl was not found, so the update-field table is not checked against "
-            "the fork in this build; run core/tools/fields/generate_update_fields.py --check by hand.")
+        message(STATUS "clang-cl was not found, so the update-field table and the engine headers are not "
+            "checked against the fork in this build; run core/tools/fields/generate_update_fields.py --check "
+            "and core/tools/engine/generate_engine.py --check by hand.")
     endif ()
 else ()
     message(WARNING "Python 3 was not found, so the seam wiring check will not run in this build. "
@@ -162,11 +191,13 @@ endforeach ()
 # What the client hands the runtime: the accessors of wxl_core_init, one function per row of
 # core's binding table (Binding.cpp), assigned by Init.cpp. Linked by every executable and by
 # WorldClient, whose World.cpp holds the seam calls.
-add_library(WarcraftXLClient STATIC Init.cpp Binding.cpp)
+add_library(WarcraftXLClient STATIC Init.cpp Binding.cpp EngineLayouts.gen.cpp)
 target_include_directories(WarcraftXLClient
     PUBLIC
         "${WXL_CORE_DIR}/include"
         "${WXL_SDK_DIR}/include"
+    PRIVATE
+        "${WXL_SDK_DIR}/engine/include"
 )
 # The client's own headers are external to this code: it is held to /W4 /permissive-, they are
 # not (the decompile carries its warnings at every level).

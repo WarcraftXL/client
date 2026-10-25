@@ -1543,6 +1543,7 @@ CM2Shared::CM2Shared(CM2Cache* cache) {
 
 // INLINED
 int32_t M2Init(uint8_t* base, uint32_t size, M2Data& data) {
+    WXL_POINT_6(base, size, data); // wxl.point
     if (reinterpret_cast<uint8_t*>(&data) < base || reinterpret_cast<uint8_t*>(&data + 1) > base + size) {
         return 0;
     }
@@ -1745,7 +1746,7 @@ int32_t CM2Shared::Initialize() {
     return 1;
 }
 
-// INLINED
+// OFFSET: 0x0083CF00
 int32_t CM2Shared::FinishLoading() {
     WXL_POINT_5(this); // wxl.point
     if (this->m_flags & 1) {
