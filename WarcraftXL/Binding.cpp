@@ -35,6 +35,7 @@
 #include "WoW/Source/DB/Rec/ItemDisplayInfoRec.h"
 #include "Engine/Source/Tempest/CRect.h"
 #include "Engine/Source/Tempest/C3Vector.h"
+#include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
 #include "WoW/Source/Object/Container.h"
@@ -1564,6 +1565,52 @@ namespace WarcraftXL::Binding {
         } else if (g_theGxDevicePtr) {
             g_theGxDevicePtr->CursorSetVisible(1);
         }
+    }
+
+    uint32_t WXL_CALL input_pending_action(const void* control) {
+        return control ? static_cast<uint32_t>(static_cast<const CGInputControl*>(control)->m_pendingDefaultAction) : 0;
+    }
+
+    void WXL_CALL input_clear_pending_action(void* control) {
+        if (control) {
+            static_cast<CGInputControl*>(control)->m_pendingDefaultAction = INPUT_RELEASE_NONE;
+        }
+    }
+
+    wxl_bool WXL_CALL input_default_action(uint32_t button) {
+        CGWorldFrame* frame = CGWorldFrame::s_currentWorldFrame;
+        if (!frame) {
+            return WXL_FALSE;
+        }
+        frame->PerformDefaultAction(static_cast<MOUSEBUTTON>(button));
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL input_mouse_look_stop(void) {
+        CGInputControl* control = CGInputControl::s_inputControl;
+        if (!control || !(control->m_flags & INPUT_MOUSE_LOOK_MASK)) {
+            return;
+        }
+        control->m_pendingDefaultAction = INPUT_RELEASE_NONE;
+        control->UnsetControlBit(INPUT_MOUSE_LOOK_MASK, OsGetAsyncTimeMs(), 0);
+    }
+
+    // --- pose.def -------------------------------------------------------------------------------
+
+    void WXL_CALL model_bone_flags(void* model, uint32_t bone, uint32_t flags, uint32_t mask) {
+        if (model) {
+            static_cast<CM2Model*>(model)->SetBoneFlags(bone, flags, mask);
+        }
+    }
+
+    void WXL_CALL model_bone_transform(void* model, uint32_t bone, const float* matrix) {
+        if (!model || !matrix) {
+            return;
+        }
+        static_assert(sizeof(C44Matrix) == 16 * sizeof(float), "model_bone_transform hands sixteen floats");
+        C44Matrix m;
+        std::memcpy(&m, matrix, sizeof m);
+        static_cast<CM2Model*>(model)->SetBoneProceduralTransform(bone, m);
     }
 
     wxl_bool WXL_CALL input_pointer_over_world(void) {

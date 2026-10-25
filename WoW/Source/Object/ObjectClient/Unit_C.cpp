@@ -1623,6 +1623,7 @@ void CGUnit_C::PreAnimate(CGWorldFrame* frame) {
     }
 
     this->UpdateDelayedSpellVisualKits();
+    wxl::seam::Unit::PreAnimate::After(this, frame);
 }
 
 // VERIFY: 8308766d manual
