@@ -129,16 +129,16 @@ endif ()
 # connection's, Os the window procedure's, BlizzardCore the file open's, SoundInterface
 # the sound's, Scrn the paint's, Gx the device's, Frame the interface's, ConsoleDevice
 # the device's creation, Magic the spell casting's, Storm the allocator's, DB the client
-# databases' and WoWCommon the character appearance's. A library added
+# databases', WoWCommon the character appearance's and UIUtil the camera's. A library added
 # here needs nothing else: the calls are declared by Seams.h,
 # which these include directories make reachable.
 set(WXL_SEAM_LIBRARIES WorldClient Event ObjectMgrClient Object Ui FrameScript Net Os BlizzardCore
     SoundInterface Scrn Gx Frame ConsoleDevice Magic ConsoleBase Glue WowServices Storm DB Services Model2
-    BLPFile SoundEngine WoWCommon)
+    BLPFile SoundEngine WoWCommon UIUtil)
 
-# The libraries whose sources carry point lines (WarcraftXL/Points.h) and no seam call: UIUtil
-# holds the camera's.
-set(WXL_POINT_LIBRARIES UIUtil)
+# The libraries whose sources carry point lines (WarcraftXL/Points.h) and no seam call: none
+# today, the camera's UIUtil carrying seams too.
+set(WXL_POINT_LIBRARIES)
 
 # The libraries whose sources carry profiler zones (WarcraftXL/Profile.h) and no seam call. The
 # zones compile to nothing on Win32, so these need the runtime only on x64.

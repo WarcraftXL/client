@@ -64,6 +64,10 @@
 #include "WoW/Source/Object/MovementShared.h"
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/Ui/ChatFrame.h"
+#include "WoW/Source/Ui/WorldFrame.h"
+#include "WoW/Source/UIUtil/Camera.h"
+#include "WoW/Source/UIUtil/InputControl.h"
+#include "Engine/Source/Frame/CSimpleTop.h"
 #include "WoW/Source/Ui/DuelInfo.h"
 #include "WoW/Source/Ui/LootFrame.h"
 #include "WoW/Source/Ui/ReputationInfo.h"
@@ -1379,6 +1383,10 @@ namespace WarcraftXL::Binding {
         return const_cast<CGUnit_C*>(static_cast<const CGUnit_C*>(Object(object)))->GetAura(index);
     }
 
+    wxl_bool WXL_CALL unit_is_outdoors(const void* object) {
+        return object && static_cast<const CGUnit_C*>(Object(object))->IsOutdoors() ? WXL_TRUE : WXL_FALSE;
+    }
+
     const void* WXL_CALL item_stats(const void* object) {
         return object ? static_cast<const CGItem_C*>(Object(object))->GetStats() : nullptr;
     }
@@ -1452,5 +1460,114 @@ namespace WarcraftXL::Binding {
         const WOWGUID none{};
         const C3Vector where{ point.x, point.y, point.z };
         return mover->ClickToMove(TRACKTYPE_MOVE, &none, &where, 0.0f) ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL action_face(const void* player, float facing) {
+        if (!player) {
+            return WXL_FALSE;
+        }
+        CGUnit_C* unit = const_cast<CGUnit_C*>(static_cast<const CGUnit_C*>(Object(player)));
+        if (CGUnit_C::s_activeMover != unit->m_obj->m_guid || !CGInputControl::CanTurn(unit)) {
+            return WXL_FALSE;
+        }
+        unit->OnSetRawFacingLocal(OsGetAsyncTimeMs(), facing);
+        return WXL_TRUE;
+    }
+
+    // --- camera.def -----------------------------------------------------------------------------
+
+    void* WXL_CALL camera_world(void) {
+        return CGWorldFrame::GetActiveCamera();
+    }
+
+    wxl_bool WXL_CALL camera_read(const void* camera, wxl_core_camera* out) {
+        if (!camera || !out) {
+            return WXL_FALSE;
+        }
+        const CGCamera* cam = static_cast<const CGCamera*>(camera);
+        Give(&out->position, cam->m_position);
+        Give(&out->forward, cam->Forward());
+        Give(&out->left, cam->Right());
+        Give(&out->up, cam->Up());
+        out->fov = cam->FOV();
+        out->fov_base = cam->m_fov;
+        out->near_z = cam->m_nearZ;
+        out->far_z = cam->m_farZ;
+        out->aspect = cam->m_aspect;
+        Give(&out->pivot, cam->m_targetPosition);
+        out->pivot.z += cam->m_height;
+        out->followed = cam->m_targetGUID.m_guid;
+        out->cinematic = cam->m_model ? 1u : 0u;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL camera_write(void* camera, const wxl_core_camera* view) {
+        if (!camera || !view) {
+            return;
+        }
+        CGCamera* cam = static_cast<CGCamera*>(camera);
+        const C3Vector forward{ view->forward.x, view->forward.y, view->forward.z };
+        if (forward.x * forward.x + forward.y * forward.y + forward.z * forward.z < 0.00000023841858f) {
+            return;
+        }
+        cam->m_position = C3Vector{ view->position.x, view->position.y, view->position.z };
+        cam->SetFacing(forward);
+        if (cam->m_relativeTo) {
+            // The facing is kept in the parent's frame, which Forward() takes back to the world:
+            // each row times the transpose of ParentToWorld.
+            const C33Matrix parent = cam->ParentToWorld();
+            C33Matrix& m = cam->m_facing;
+            const C3Vector rows[3] = { { m.a0, m.a1, m.a2 }, { m.b0, m.b1, m.b2 }, { m.c0, m.c1, m.c2 } };
+            C3Vector local[3];
+            for (int i = 0; i < 3; ++i) {
+                const C3Vector& w = rows[i];
+                local[i] = C3Vector{ w.x * parent.a0 + w.y * parent.a1 + w.z * parent.a2,
+                                     w.x * parent.b0 + w.y * parent.b1 + w.z * parent.b2,
+                                     w.x * parent.c0 + w.y * parent.c1 + w.z * parent.c2 };
+            }
+            m.a0 = local[0].x; m.a1 = local[0].y; m.a2 = local[0].z;
+            m.b0 = local[1].x; m.b1 = local[1].y; m.b2 = local[1].z;
+            m.c0 = local[2].x; m.c1 = local[2].y; m.c2 = local[2].z;
+        }
+        cam->m_fov = view->fov_base;
+    }
+
+    wxl_bool WXL_CALL world_trace(wxl_vec3 start, wxl_vec3 finish, uint32_t flags, wxl_vec3* hit) {
+        if (!hit) {
+            return WXL_FALSE;
+        }
+        const C3Vector from{ start.x, start.y, start.z };
+        const C3Vector to{ finish.x, finish.y, finish.z };
+        C3Vector point{ 0.0f, 0.0f, 0.0f };
+        float fraction = 1.0f;
+        if (!World::Intersect(from, to, &point, &fraction, flags, nullptr)) {
+            return WXL_FALSE;
+        }
+        return Give(hit, point);
+    }
+
+    // --- input.def ------------------------------------------------------------------------------
+
+    wxl_bool WXL_CALL input_cursor_visible(void) {
+        return g_theGxDevicePtr && g_theGxDevicePtr->m_cursorVisible ? WXL_TRUE : WXL_FALSE;
+    }
+
+    void WXL_CALL input_cursor_set_visible(wxl_bool visible) {
+        if (g_theGxDevicePtr) {
+            g_theGxDevicePtr->CursorSetVisible(visible ? 1 : 0);
+        }
+    }
+
+    void WXL_CALL input_cursor_restore(void) {
+        if (CGInputControl::s_inputControl) {
+            CGInputControl::s_inputControl->UpdateMouseMode(1);
+        } else if (g_theGxDevicePtr) {
+            g_theGxDevicePtr->CursorSetVisible(1);
+        }
+    }
+
+    wxl_bool WXL_CALL input_pointer_over_world(void) {
+        CGWorldFrame* frame = CGWorldFrame::s_currentWorldFrame;
+        return frame && CSimpleTop::s_instance && CSimpleTop::s_instance->m_mouseFocus == frame ? WXL_TRUE : WXL_FALSE;
     }
 }
