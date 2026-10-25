@@ -749,7 +749,11 @@ enum ANIMATION_ID {
     ANIM_CARRIED_2H = 0x1F7,
     ANIM_FLY_CARRY_2H = 0x1F8,
     ANIM_FLY_CARRIED_2H = 0x1F9,
-    ANIM_COUNT = 0x1FA,
+    // WarcraftXL: 0x1FA (506) in the 3.3.5a client. Raised so retail's animation ids (up to 1865,
+    // and the WoD character models' up to 808) play, with their AnimationData rows in a patch; the
+    // client still walks each id's fallback chain to one a model has. Also every "no animation"
+    // sentinel, and the size of the per-id tables (ObjectEffect, the fallback walks).
+    ANIM_COUNT = 0x800,
 };
 
 enum OBJECT_EFFECT_STATE_COUNT {

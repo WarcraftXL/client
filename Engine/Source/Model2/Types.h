@@ -36,7 +36,9 @@ enum M2BLEND : uint16_t {
     M2BLEND_ADD = 4,
     M2BLEND_MOD = 5,
     M2BLEND_MOD2X = 6,
-    M2BLEND_COUNT = 7,
+    // WarcraftXL: modern M2 blend mode 7, premultiplied "blend add" (GxBlend_BlendAdd)
+    M2BLEND_BLEND_ADD = 7,
+    M2BLEND_COUNT = 8,
 };
 
 enum M2PARTICLEBLENDMODE : uint8_t {

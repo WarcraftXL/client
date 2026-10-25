@@ -3441,15 +3441,26 @@ void CCharacterComponent::GeosRenderPrep() {
     }
 
     CM2Model* model = this->m_data.m_model;
-    model->SetGeometryVisible(0, 2000, 0);
+    // WarcraftXL: 0-2000 in the 3.3.5a client. Newer bodies (BfA's HD ones) have groups past 19
+    // with several variants each; hidden here, they show their first variant below, as the
+    // client shows a group it is not told about.
+    model->SetGeometryVisible(0, 2999, 0);
     model->SetGeometryVisible(0, 0, 1);
 
     for (int32_t i = 0; i < NUM_CHARGEOSETS; i++) {
         if (i == CHARGEOSET_EYEEFFECTS && eyeGlow) {
             this->m_data.m_model->SetGeometryVisible(1703, 1703, 1);
+        } else if (i == 17 && this->m_data.m_geosets[i] == 1700) {
+            // WarcraftXL: no eye geoset named: the newer bodies' own eyes (1702); a body without
+            // them has no such geoset and shows nothing more
+            this->m_data.m_model->SetGeometryVisible(1702, 1702, 1);
         } else {
             this->m_data.m_model->SetGeometryVisible(this->m_data.m_geosets[i], this->m_data.m_geosets[i], 1);
         }
+    }
+
+    for (uint32_t group = 20; group <= 29; group++) {
+        this->m_data.m_model->SetGeometryVisible(group * 100 + 1, group * 100 + 1, 1);
     }
 
     ItemDisplayInfoRec rec;

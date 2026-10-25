@@ -320,8 +320,8 @@ class CGxDeviceD3d9Ex : public CGxDevice {
     static EGxTexFormat s_GxTexFormatToUse[GxTexFormats_Last];
     static const D3DCUBEMAP_FACES s_faceTypes[GxTexCubeFaces_Last];
     static const D3DPRIMITIVETYPE s_primitiveConversion[GxPrims_Last];
-    static const D3DBLEND s_srcBlend[12];
-    static const D3DBLEND s_dstBlend[12];
+    static const D3DBLEND s_srcBlend[GxBlends_Last];
+    static const D3DBLEND s_dstBlend[GxBlends_Last];
     static const D3DCMPFUNC s_cmpFunc[GxCmps_Last];
     static const D3DCULL s_cullMode[3];
     static D3DTEXTUREFILTERTYPE s_filterModes[GxTexFilters_Last][3];

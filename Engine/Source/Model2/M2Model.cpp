@@ -40,7 +40,7 @@
 #include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00A45570
-static const uint32_t s_ribbonBlendModes[] = { 0, 1, 2, 10, 3, 4, 5 };
+static const uint32_t s_ribbonBlendModes[] = { 0, 1, 2, 10, 3, 4, 5, 12 };
 
 // STATIC: 0x00D4118C
 void (*CM2Model::s_transformVertices[5])(CM2Model*, M2SkinSection*, uint8_t*, int32_t);
@@ -1137,7 +1137,8 @@ uint32_t CM2Model::ResolveSequenceFallback(uint32_t id) {
 // VERIFY: af94bf41 manual
 // OFFSET: 0x00826050
 int32_t CM2Model::IsSequenceLoaded(uint32_t id) {
-    if (id >= 506) {
+    // WarcraftXL: 506 in the 3.3.5a client, which turned every retail animation id away
+    if (id >= ANIM_COUNT) {
         return 0;
     }
 
@@ -7433,6 +7434,13 @@ int32_t CM2Model::InitializeLoaded() {
 
                 case M2PARTICLEBLEND_MOD2X:
                     material.m_blendMode = GxBlend_Mod2x;
+                    material.m_flags &= ~4u;
+                    break;
+
+                // WarcraftXL: modern models' blend add (premultiplied). Stock left it opaque with alpha
+                // testing on, which draws each sprite as a solid square.
+                case M2BLEND_BLEND_ADD:
+                    material.m_blendMode = GxBlend_BlendAdd;
                     material.m_flags &= ~4u;
                     break;
             }

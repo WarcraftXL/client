@@ -33,7 +33,9 @@ enum EGxBlend {
     GxBlend_SrcAlphaOpaque = 9,
     GxBlend_NoAlphaAdd = 10,
     GxBlend_ConstantAlpha = 11,
-    GxBlends_Last = 12,
+    // WarcraftXL: premultiplied "blend add" (src * 1 + dst * (1 - srcAlpha)), modern M2 blend mode 7.
+    GxBlend_BlendAdd = 12,
+    GxBlends_Last = 13,
 };
 
 enum EGxCmp : int32_t {

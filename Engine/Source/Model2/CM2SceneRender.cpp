@@ -22,7 +22,7 @@
 #include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00A45390
-const uint32_t s_fogModes[M2BLEND_COUNT] = { 1, 1, 1, 2, 2, 3, 4 };
+const uint32_t s_fogModes[M2BLEND_COUNT] = { 1, 1, 1, 2, 2, 3, 4, 2 };
 
 // STATIC: 0x00AF58A8
 static C44Matrix s_identity;
@@ -295,7 +295,8 @@ void CM2SceneRender::SetupMaterial() {
 
         float alphaRef;
 
-        if (this->m_curMaterial->m_blendMode == M2BLEND_OPAQUE) {
+        // WarcraftXL: blend add (7) adds colour where alpha is 0 too, so nothing may be alpha-tested away
+        if (this->m_curMaterial->m_blendMode == M2BLEND_OPAQUE || this->m_curMaterial->m_blendMode == M2BLEND_BLEND_ADD) {
             alphaRef = 0.0f;
         } else if (this->m_curMaterial->m_blendMode == M2BLEND_ALPHA_KEY) {
             alphaRef = this->m_curElement->m_alpha * 0.87843138f;

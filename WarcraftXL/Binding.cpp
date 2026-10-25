@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <cstring>
 #include <type_traits>
+#include <unordered_map>
 #include <vector>
 
 #include "Engine/Source/Base/CDataStore.h"
@@ -80,6 +81,7 @@
 #include "WoW/Source/WorldClient/MapDoodadDef.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
+#include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/World.h"
 #include "wxl/core/gpu.hpp"
 #include "wxl/core/filestack.hpp"
@@ -755,6 +757,17 @@ namespace WarcraftXL::Binding {
         return rec ? rec->m_clientPrefix : nullptr;
     }
 
+    // The animation each world model starts with once it has loaded (see m2_play_animation).
+    struct PendingAnim {
+        uint32_t anim;
+        float speed;
+    };
+
+    std::unordered_map<CM2Model*, PendingAnim>& PendingAnims() {
+        static std::unordered_map<CM2Model*, PendingAnim> s_pending;
+        return s_pending;
+    }
+
     void* WXL_CALL m2_create_model(void* scene_model, const char* path) {
         CM2Model* parent = static_cast<CM2Model*>(scene_model);
         if (!parent || !parent->m_scene || !path || !*path) {
@@ -765,6 +778,7 @@ namespace WarcraftXL::Binding {
 
     void WXL_CALL m2_release_model(void* model) {
         if (model) {
+            PendingAnims().erase(static_cast<CM2Model*>(model));
             static_cast<CM2Model*>(model)->Release();
         }
     }
@@ -1616,5 +1630,238 @@ namespace WarcraftXL::Binding {
     wxl_bool WXL_CALL input_pointer_over_world(void) {
         CGWorldFrame* frame = CGWorldFrame::s_currentWorldFrame;
         return frame && CSimpleTop::s_instance && CSimpleTop::s_instance->m_mouseFocus == frame ? WXL_TRUE : WXL_FALSE;
+    }
+
+    // --- M2: models of the world (wxl.m2's world calls) ----------------------------------------
+
+    // The map entity of each model placed in the world: what culls and draws it, as a spell
+    // effect's has. And the animation each world model starts with once it has loaded.
+    std::unordered_map<CM2Model*, CMapEntity*>& WorldEntities() {
+        static std::unordered_map<CM2Model*, CMapEntity*> s_entities;
+        return s_entities;
+    }
+
+    void PlayNow(CM2Model* model, uint32_t anim, float speed) {
+        if (!model->HasSequence(anim)) {
+            anim = 0;
+        }
+        model->SetBoneSequence(0xFFFFFFFF, anim, 0xFFFFFFFF, 0, speed, 1, 1);
+    }
+
+    void OnWorldModelLoaded(CM2Model* model, void*) {
+        auto& pending = PendingAnims();
+        auto it = pending.find(model);
+        if (it == pending.end()) {
+            PlayNow(model, 0, 1.0f);
+            return;
+        }
+        PendingAnim anim = it->second;
+        pending.erase(it);
+        PlayNow(model, anim.anim, anim.speed);
+    }
+
+    // What CGWorldFrame::SpellEffectEnumProc does for a spell effect: animate it, and show it
+    // while the map draws it.
+    int32_t WorldModelEnum(void*, uint32_t flags, uint64_t, uintptr_t param32) {
+        CM2Model* model = reinterpret_cast<CM2Model*>(param32);
+        if (!model) {
+            return 1;
+        }
+        model->SetAnimating(1);
+        if (model->IsLoaded(0, 0) && !model->m_attachParent) {
+            const uint32_t visible = flags & 1;
+            model->m_fFlags = (model->m_fFlags & ~0x8u) | (visible << 3);
+            model->m_fFlags = (model->m_fFlags & ~0x10000u) | (visible << 16);
+        }
+        return 1;
+    }
+
+    C44Matrix PlacementMatrix(const wxl_m2_placement& at) {
+        C44Matrix matrix;
+        if (at.yaw != 0.0f) {
+            matrix.RotateAroundZ(at.yaw);
+        }
+        if (at.pitch != 0.0f) {
+            matrix.RotateAroundY(at.pitch);
+        }
+        if (at.roll != 0.0f) {
+            matrix.RotateAroundX(at.roll);
+        }
+        matrix.Scale(at.scale > 0.0f ? at.scale : 1.0f);
+        matrix.d0 = at.position.x;
+        matrix.d1 = at.position.y;
+        matrix.d2 = at.position.z;
+        return matrix;
+    }
+
+    void* WXL_CALL m2_create_world_model(const char* path) {
+        if (!World::s_m2Scene || !path || !*path) {
+            return nullptr;
+        }
+        CM2Model* model = World::s_m2Scene->CreateModel(path, 0);
+        if (model) {
+            model->SetLoadedCallback(&OnWorldModelLoaded, nullptr);
+        }
+        return model;
+    }
+
+    wxl_bool WXL_CALL m2_place_world(void* model, const wxl_m2_placement* placement) {
+        CM2Model* m = static_cast<CM2Model*>(model);
+        if (!m || !placement || !World::s_m2Scene) {
+            return WXL_FALSE;
+        }
+        if (m->m_attachParent) {
+            m->DetachFromParent();
+        }
+        m->SetWorldTransform(PlacementMatrix(*placement));
+        // Its projected batches lie on the terrain whatever the projected-textures option says, as
+        // the client's own spell effects of such spells do (CEffect::PostInitialize).
+        m->m_fFlags |= 0x4;
+        C44Matrix world = m->m_worldTransform;
+        CMapEntity*& entity = WorldEntities()[m];
+        if (!entity) {
+            entity = CMap::ObjectCreateStatic(m, world, &WorldModelEnum, nullptr, reinterpret_cast<uintptr_t>(m));
+            if (!entity) {
+                WorldEntities().erase(m);
+                return WXL_FALSE;
+            }
+        }
+        CAaBox box;
+        CAaSphere sphere;
+        C3Vector light;
+        if (m->IsLoaded(0, 0)) {
+            box = m->GetBoundingBox();
+            sphere = m->GetBoundingSphere();
+            light = sphere.c;
+        }
+        light.z = 1.0f;
+        CMap::ObjectUpdate(entity, world, box, sphere, light, false, 0xFFFFFFFF);
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL m2_unplace_world(void* model) {
+        CM2Model* m = static_cast<CM2Model*>(model);
+        auto& entities = WorldEntities();
+        auto it = entities.find(m);
+        if (it == entities.end()) {
+            return;
+        }
+        CMapEntity* entity = it->second;
+        entities.erase(it);
+        if (entity) {
+            World::ObjectDestroy(entity);
+        }
+        m->m_fFlags &= ~(0x8u | 0x10000u);
+    }
+
+    void WXL_CALL m2_set_transform(void* model, const wxl_m2_placement* placement) {
+        if (model && placement) {
+            static_cast<CM2Model*>(model)->SetWorldTransform(PlacementMatrix(*placement));
+        }
+    }
+
+    void WXL_CALL m2_play_animation(void* model, uint32_t anim, float speed) {
+        CM2Model* m = static_cast<CM2Model*>(model);
+        if (!m) {
+            return;
+        }
+        if (!(m->m_fFlags & 1)) {
+            PendingAnims()[m] = PendingAnim{anim, speed};
+            return;
+        }
+        PlayNow(m, anim, speed);
+    }
+
+    wxl_bool WXL_CALL m2_loaded(const void* model) {
+        return model && (static_cast<const CM2Model*>(model)->m_fFlags & 1) ? WXL_TRUE : WXL_FALSE;
+    }
+
+    uint32_t WXL_CALL m2_animation_length(void* model, uint32_t anim) {
+        CM2Model* m = static_cast<CM2Model*>(model);
+        if (!m || !(m->m_fFlags & 1) || !m->HasSequence(anim)) {
+            return 0;
+        }
+        M2SequenceInfo info;
+        m->GetSequenceInfo(anim, 0, info);
+        return info.m_duration;
+    }
+
+    void WXL_CALL m2_set_alpha(void* model, float alpha) {
+        if (model) {
+            static_cast<CM2Model*>(model)->m_baseAlpha = alpha;
+        }
+    }
+
+    void WXL_CALL m2_set_emitting(void* model, wxl_bool emitting) {
+        if (CM2Model* m = static_cast<CM2Model*>(model)) {
+            m->SetEmittersEnabled(emitting ? 1 : 0);
+            m->SetRibbonsEnabled(emitting ? 1 : 0);
+        }
+    }
+
+    wxl_bool WXL_CALL m2_ground_height(const wxl_vec3* at, float up, float down, float* out_z) {
+        if (!at || !out_z || !World::s_m2Scene) {
+            return WXL_FALSE;
+        }
+        C3Vector start(at->x, at->y, at->z + up);
+        C3Vector end(at->x, at->y, at->z - down);
+        C3Vector hit(0.0f, 0.0f, 0.0f);
+        float distance = 1.0f;
+        if (!World::Intersect(start, end, &hit, &distance, 0x120111, nullptr)) {
+            return WXL_FALSE;
+        }
+        *out_z = hit.z;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL m2_attachment_world(void* model, uint32_t attachment, wxl_vec3* out) {
+        CM2Model* m = static_cast<CM2Model*>(model);
+        if (!m || !out || !(m->m_fFlags & 1) || !m->m_scene || !m->HasAttachment(attachment)) {
+            return WXL_FALSE;
+        }
+        const C3Vector position = m->GetAttachmentPosition(attachment);
+        out->x = position.x;
+        out->y = position.y;
+        out->z = position.z;
+        return WXL_TRUE;
+    }
+
+    // --- M2: bones for wxl.m2's bone watchers (live physics) -----------------------------------
+
+    static_assert(sizeof(C44Matrix) == 16 * sizeof(float), "a bone matrix is 16 floats");
+
+    wxl_bool WXL_CALL m2_bones(void* model, wxl_m2_bones* out) {
+        CM2Model* m = static_cast<CM2Model*>(model);
+        if (!m || !out || !(m->m_fFlags & 1) || !m->m_boneMatrices || !m->m_scene || !m->m_shared || !m->m_shared->m_data) {
+            return WXL_FALSE;
+        }
+        const CM2Shared* shared = m->m_shared;
+        out->model = m;
+        out->file = m->m_shared;
+        out->path.data = shared->m_fileName;
+        out->path.size = static_cast<uint32_t>(strnlen(shared->m_fileName, sizeof shared->m_fileName));
+        out->bone_count = shared->m_data->m_bones.m_count;
+        out->matrices = reinterpret_cast<float*>(m->m_boneMatrices);
+        std::memcpy(out->model_matrix, &m->m_matrixF4, sizeof out->model_matrix);
+        std::memcpy(out->view_to_world, &m->m_scene->m_viewInv, sizeof out->view_to_world);
+        out->time_ms = m->m_scene->m_time;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL m2_file_bone(const void* file, uint32_t index, int16_t* parent, wxl_vec3* pivot) {
+        const CM2Shared* shared = static_cast<const CM2Shared*>(file);
+        if (!shared || !shared->m_data || index >= shared->m_data->m_bones.m_count) {
+            return WXL_FALSE;
+        }
+        const M2CompBone& bone = shared->m_data->m_bones[index];
+        if (parent) {
+            *parent = static_cast<int16_t>(bone.m_parentIndex);
+        }
+        if (pivot) {
+            pivot->x = bone.m_pivot.x;
+            pivot->y = bone.m_pivot.y;
+            pivot->z = bone.m_pivot.z;
+        }
+        return WXL_TRUE;
     }
 }

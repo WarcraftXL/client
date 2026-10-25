@@ -24,10 +24,10 @@
 #include "WarcraftXL/Profile.h"
 
 // STATIC: 0x00A45374
-const uint32_t s_localLighting[M2BLEND_COUNT] = { 1, 1, 1, 1, 1, 0, 0 };
+const uint32_t s_localLighting[M2BLEND_COUNT] = { 1, 1, 1, 1, 1, 0, 0, 1 };
 
 // STATIC: 0x00A453B0
-const uint32_t s_blendModes[3][M2BLEND_COUNT] = { { 0, 1, 2, 10, 3, 4, 5 }, { 2, 2, 2, 10, 3, 4, 5 }, { 2, 2, 2, 10, 3, 4, 5 } };
+const uint32_t s_blendModes[3][M2BLEND_COUNT] = { { 0, 1, 2, 10, 3, 4, 5, 12 }, { 2, 2, 2, 10, 3, 4, 5, 12 }, { 2, 2, 2, 10, 3, 4, 5, 12 } };
 
 // STATIC: 0x00AF5898
 uint32_t CM2Scene::s_optFlags = 0xFFFFFFFF;
@@ -91,6 +91,8 @@ uint32_t ParticleBlendToM2Blend(uint32_t blend) {
             return M2BLEND_MOD2X;
         case 10:
             return M2BLEND_NO_ALPHA_ADD;
+        case GxBlend_BlendAdd: // WarcraftXL: M2 blend mode 7
+            return M2BLEND_BLEND_ADD;
         default:
             return M2BLEND_OPAQUE;
     }
@@ -1466,7 +1468,8 @@ void __stdcall CM2Scene::ComputeElementShaders(M2Element* element) {
     uint32_t boneInfluences = element->m_skinSection->m_boneInfluences;
     int32_t alphaTest;
 
-    if (material->m_blendMode == M2BLEND_OPAQUE) {
+    // WarcraftXL: blend add (7) adds colour where alpha is 0 too, so it is not alpha-tested
+    if (material->m_blendMode == M2BLEND_OPAQUE || material->m_blendMode == M2BLEND_BLEND_ADD) {
         alphaTest = 0;
     } else if (material->m_blendMode == M2BLEND_ALPHA_KEY) {
         alphaTest = static_cast<int32_t>(element->m_alpha * 224.0f);

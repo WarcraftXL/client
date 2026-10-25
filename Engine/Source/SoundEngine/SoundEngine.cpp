@@ -2889,6 +2889,9 @@ int32_t SE2::CreateWaveData(FMOD::System* system, const char* filename, FMOD_MOD
             mode |= FMOD_MPEGSEARCH;
             cacheable = false;
             exinfo.suggestedsoundtype = FMOD_SOUND_TYPE_MPEG;
+        } else if (!SStrCmpI(extension, ".ogg", STORM_MAX_STR)) {
+            // WarcraftXL: retail's sounds (ported spells and creatures) are Ogg Vorbis
+            exinfo.suggestedsoundtype = FMOD_SOUND_TYPE_OGGVORBIS;
         }
     }
 
