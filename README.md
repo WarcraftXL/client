@@ -6,7 +6,7 @@
 
 [![Client](https://img.shields.io/badge/client-3.3.5a%20(12340)-orange.svg)](#-what-it-is)
 [![Target](https://img.shields.io/badge/target-x64-lightgrey.svg)](#-building)
-[![ABI](https://img.shields.io/badge/ABI-0.1.22-blue.svg)](https://github.com/WarcraftXL/sdk)
+[![ABI](https://img.shields.io/badge/ABI-0.1.23-blue.svg)](https://github.com/WarcraftXL/sdk)
 [![Runtime](https://img.shields.io/badge/runtime-WarcraftXL%20core-blue.svg)](https://github.com/WarcraftXL/core)
 
 </div>
