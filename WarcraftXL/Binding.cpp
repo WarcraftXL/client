@@ -1799,21 +1799,6 @@ namespace WarcraftXL::Binding {
         }
     }
 
-    wxl_bool WXL_CALL m2_ground_height(const wxl_vec3* at, float up, float down, float* out_z) {
-        if (!at || !out_z || !World::s_m2Scene) {
-            return WXL_FALSE;
-        }
-        C3Vector start(at->x, at->y, at->z + up);
-        C3Vector end(at->x, at->y, at->z - down);
-        C3Vector hit(0.0f, 0.0f, 0.0f);
-        float distance = 1.0f;
-        if (!World::Intersect(start, end, &hit, &distance, 0x120111, nullptr)) {
-            return WXL_FALSE;
-        }
-        *out_z = hit.z;
-        return WXL_TRUE;
-    }
-
     wxl_bool WXL_CALL m2_attachment_world(void* model, uint32_t attachment, wxl_vec3* out) {
         CM2Model* m = static_cast<CM2Model*>(model);
         if (!m || !out || !(m->m_fFlags & 1) || !m->m_scene || !m->HasAttachment(attachment)) {
