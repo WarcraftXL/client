@@ -446,3 +446,46 @@ CM2Cache::CM2Cache() : m_threadStart(0, 0), m_threadDone(0, 0) {
     this->unused_101C[0] = '\0';
     this->unused_105C[0] = '\0';
 }
+
+// The model files WarcraftXL drops from the cache so their next use reads the file again
+// (WarcraftXL/Binding.cpp, m2_cache_evict): each one whose file name without its folder is `leaf`,
+// unlinked from its bucket as ~CM2Shared unlinks it. The models made from it keep it; its last
+// Release then deletes it, since it is in no bucket.
+uint32_t WarcraftXLEvictModels(const char* leaf, void** out, uint32_t capacity) {
+    if (!leaf || !*leaf) {
+        return 0;
+    }
+
+    uint32_t evicted = 0;
+
+    for (uint32_t i = 0; i < sizeof(s_cache.m_shared) / sizeof(s_cache.m_shared[0]); i++) {
+        CM2Shared* shared = s_cache.m_shared[i];
+
+        while (shared) {
+            CM2Shared* next = shared->m_next;
+
+            if (shared->m_fileNameWithoutPath && !SStrCmpI(shared->m_fileNameWithoutPath, leaf, STORM_MAX_STR)) {
+                if (shared->m_previous) {
+                    *shared->m_previous = shared->m_next;
+                }
+
+                if (shared->m_next) {
+                    shared->m_next->m_previous = shared->m_previous;
+                }
+
+                shared->m_previous = nullptr;
+                shared->m_next = nullptr;
+
+                if (out && evicted < capacity) {
+                    out[evicted] = shared;
+                }
+
+                evicted++;
+            }
+
+            shared = next;
+        }
+    }
+
+    return evicted;
+}

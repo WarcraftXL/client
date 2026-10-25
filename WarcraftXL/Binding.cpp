@@ -177,6 +177,8 @@ namespace {
 // Defined beside the statics they reach, which their files keep to themselves.
 void WarcraftXLAnswerDuel(WOWGUID arbiter, WOWGUID challenger, bool accept);
 int32_t WarcraftXLNextLootRollId();
+uint32_t WarcraftXLEvictModels(const char* leaf, void** out, uint32_t capacity);
+uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy);
 
 namespace WarcraftXL::Binding {
     // --- the field rows, generated from the table --------------------------------------------
@@ -1001,6 +1003,14 @@ namespace WarcraftXL::Binding {
         return WXL_TRUE;
     }
 
+    wxl_bool WXL_CALL archive_record_of(void* record, wxl_core_archive* out) {
+        if (!record || !out) {
+            return WXL_FALSE;
+        }
+        Describe(static_cast<const System_SFile::ARCHIVEREC*>(record), out);
+        return WXL_TRUE;
+    }
+
     namespace {
         template <class Rec>
         void TellDb(const WowClientDB<Rec>& store, const char* file, wxl_core_db_fn fn, void* user) {
@@ -1170,6 +1180,26 @@ namespace WarcraftXL::Binding {
 
     const char* WXL_CALL texture_name(const void* texture) {
         return texture ? static_cast<const CTexture*>(texture)->m_filename : nullptr;
+    }
+
+    uint32_t WXL_CALL m2_cache_evict(const char* leaf, void** out, uint32_t capacity) {
+        return WarcraftXLEvictModels(leaf, out, capacity);
+    }
+
+    wxl_bool WXL_CALL unit_update_display(void* object) {
+        if (!object) {
+            return WXL_FALSE;
+        }
+        CGObject_C* unit = static_cast<CGObject_C*>(object);
+        if (unit->m_typeId != ID_UNIT && unit->m_typeId != ID_PLAYER) {
+            return WXL_FALSE;
+        }
+        unit->UpdateDisplayInfo(1);
+        return WXL_TRUE;
+    }
+
+    uint32_t WXL_CALL texture_reload(const char* name, uint32_t* busy) {
+        return WarcraftXLReloadTextures(name, busy);
     }
 
     const void* WXL_CALL map_obj_bytes(const void* map_obj, uint32_t* size) {

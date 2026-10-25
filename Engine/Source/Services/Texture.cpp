@@ -2572,3 +2572,69 @@ CTexture* TextureCreate(const char* fileName, CGxTexFlags texFlags, CStatus* sta
 
     return TextureCreateSolid(*reinterpret_cast<const CImVector*>(&s_defaultColor));
 }
+
+// The textures WarcraftXL reads again in place so a file that changed shows (WarcraftXL/Binding.cpp,
+// texture_reload): every one of the list whose name is `name` (no extension, any case), its pixels
+// and device texture made again from `name`.blp by PumpBlpTextureAsync as CreateBlpSync makes
+// them. One still loading, or on the atlas, is left alone and counted in `busy`.
+uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy) {
+    if (busy) {
+        *busy = 0;
+    }
+
+    if (!name || !*name) {
+        return 0;
+    }
+
+    char path[260];
+    SStrPrintf(path, sizeof(path), "%s.blp", name);
+
+    uint32_t reloaded = 0;
+    SFileImpl* file = nullptr;
+    void* data = nullptr;
+    bool tried = false;
+
+    for (CTexture* texture = s_textureList.Head(); !s_textureList.IsEnd(texture); texture = s_textureList.RawNext(texture)) {
+        if (SStrCmpI(texture->m_filename, name, STORM_MAX_STR) && SStrCmpI(texture->m_filename, path, STORM_MAX_STR)) {
+            continue;
+        }
+
+        if (texture->m_asyncObject || texture->m_atlas || (texture->m_flags & 4)) {
+            if (busy) {
+                (*busy)++;
+            }
+
+            continue;
+        }
+
+        if (!tried) {
+            tried = true;
+
+            if (SFile::OpenEx(nullptr, path, 0, &file) && file) {
+                uint32_t size = SFileGetFileSize(file, nullptr);
+                data = SMemAlloc(size, __FILE__, __LINE__, 0);
+
+                if (!SFileReadFile(file, data, size, nullptr, nullptr, 0)) {
+                    SMemFree(data, __FILE__, __LINE__, 0);
+                    data = nullptr;
+                }
+
+                SFileCloseFile(file);
+            }
+        }
+
+        if (!data) {
+            break;
+        }
+
+        if (PumpBlpTextureAsync(texture, data)) {
+            reloaded++;
+        }
+    }
+
+    if (data) {
+        SMemFree(data, __FILE__, __LINE__, 0);
+    }
+
+    return reloaded;
+}
