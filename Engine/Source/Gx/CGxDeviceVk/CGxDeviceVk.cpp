@@ -805,6 +805,7 @@ void CGxDeviceVk::ScenePresent() {
         int32_t scrShotClick = this->m_scrShotClick;
 
         CGxDevice::ScenePresent();
+        this->ICursorDraw();
 
         if (scrShotClick) {
             this->DeviceScreenShot();
@@ -1280,7 +1281,7 @@ int32_t CGxDeviceVk::TexStretch(CGxTex* dest, const CiRect* destRect, const CiRe
     return this->m_vk->tex_stretch(this, dest, destRect ? destValues : nullptr, sourceRect ? sourceValues : nullptr, level, face);
 }
 
-// --- The pointer: hardware through Windows' cursor, software drawn by the present pass ------------
+// --- The pointer: hardware through Windows' cursor, software drawn by the engine into the scene --
 
 void CGxDeviceVk::ICursorCreate(const CGxFormat& format) {
     CGxDevice::ICursorCreate(format);
@@ -1294,9 +1295,11 @@ void CGxDeviceVk::ICursorDestroy() {
     CGxDevice::ICursorDestroy();
 }
 
+// As the D3D9 device: the software cursor is the engine's quad drawn into the scene at present,
+// before a screenshot reads it back (the hardware one is Windows', in no screenshot). The scene
+// stays open between frames here, so no scene begins or ends around it.
 void CGxDeviceVk::ICursorDraw() {
-    // Neither cursor is drawn by the engine here: the hardware one is Windows', the software one
-    // is drawn over the frame by the runtime's present pass.
+    CGxDevice::ICursorDraw();
 }
 
 void CGxDeviceVk::CursorSetVisible(int32_t visible) {

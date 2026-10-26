@@ -542,7 +542,8 @@ void CGxDevice::ICursorDraw() {
     float top = 1.0f - static_cast<float>(y - this->m_cursorHotspotY) * invHeight;
     float bottom = 1.0f - static_cast<float>(y - this->m_cursorHotspotY + 32) * invHeight;
 
-    if (this->m_api == GxApi_D3d9 || this->m_api == GxApi_D3d9Ex) {
+    // The Vulkan device rasterizes with D3D9's pixel centres: the same half-pixel correction.
+    if (this->m_api == GxApi_D3d9 || this->m_api == GxApi_D3d9Ex || this->m_api == GxApi_Vulkan) {
         left -= invWidth * 0.5f;
         right -= invWidth * 0.5f;
         top += invHeight * 0.5f;
