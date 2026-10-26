@@ -121,9 +121,12 @@ or `[gx] api = vulkan` in `WarcraftXL.ini` (which also takes a D3D9Ex request) c
 device, `Engine/Source/Gx/CGxDeviceVk`, an adapter over the runtime's renderer. The window, its
 fullscreen (borderless), resizes and minimising, the frame, the world and the game's interface,
 the textures the engine draws into (the minimap, portraits, full-screen effects), Dear ImGui and the
-pointer go through Vulkan; the client's shaders are their records translated by the runtime from
+pointer go through Vulkan (the software pointer drawn into the frame as on D3D9, so screenshots
+show it); the client's shaders are their records translated by the runtime from
 DX9 bytecode, once per machine. Screenshots and the portraits read the frame back as on D3D9;
-`gxMultisample` multisamples it, the video options offering the counts the Vulkan device has. A
+`gxMultisample` multisamples it, the video options offering the counts the Vulkan device has, and
+the draws the engine keeps unsmoothed (the quest areas on the world map) stay hard-edged where the
+device has sample locations. A
 machine without Vulkan 1.3 stays on D3D9, and the log says why. Two console commands serve the renderer's tests: `gxVkSimulateLoss` (the Vulkan device lost and
 made again) and `gxCapture` (the next frame of the D3D9 device recorded to `WarcraftXL\captures\`).
 
