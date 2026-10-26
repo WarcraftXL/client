@@ -35,6 +35,7 @@ const char* DrawLayerToString(uint32_t layer);
 const char* FontFlagsToString(uint32_t flags);
 const char* FramePointToString(FRAMEPOINT point);
 const char* FrameStrataToString(FRAME_STRATA strata);
+void CalculateSignatureMD5(const char* tocFile, const char* extraFile, uint8_t* digest);
 int32_t FrameXML_CheckSignature(const char* tocFile, const char* extraFile, const uint8_t* modulus, uint8_t* digest);
 const char* JustifyToString(uint32_t justify);
 CSimpleAnimGroup* LoadXML_AnimGroup(XMLNode* node, CScriptRegion* region, CStatus* status);

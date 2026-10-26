@@ -16,6 +16,7 @@
 #include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/MPQGlobals.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
+#include "Engine/Source/FrameXML/LoadXML.h"
 #include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/SFileArchives.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.h"
@@ -886,6 +887,21 @@ namespace WarcraftXL::Binding {
         if (cvar) {
             static_cast<CVar*>(cvar)->m_flags = flags;
         }
+    }
+
+    // --- interface.def --------------------------------------------------------------------------
+
+    int32_t WXL_CALL interface_check_signature(const char* toc, const char* extra, const uint8_t* modulus, uint8_t* digest) {
+        // The gate at the top of FrameXML_CheckSignature lets this call through.
+        return toc && digest ? FrameXML_CheckSignature(toc, extra, modulus, digest) : -1;
+    }
+
+    wxl_bool WXL_CALL interface_signature_digest(const char* toc, const char* extra, uint8_t* digest) {
+        if (!toc || !digest) {
+            return WXL_FALSE;
+        }
+        CalculateSignatureMD5(toc, extra && *extra ? extra : nullptr, digest);
+        return WXL_TRUE;
     }
 
     uint32_t WXL_CALL m2_children(const void* model, void** out, uint32_t capacity) {

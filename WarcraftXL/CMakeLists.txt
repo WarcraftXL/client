@@ -134,7 +134,7 @@ endif ()
 # which these include directories make reachable.
 set(WXL_SEAM_LIBRARIES WorldClient Event ObjectMgrClient Object Ui FrameScript Net Os BlizzardCore
     SoundInterface Scrn Gx Frame ConsoleDevice Magic ConsoleBase Glue WowServices Storm DB Services Model2
-    BLPFile SoundEngine WoWCommon UIUtil)
+    BLPFile SoundEngine WoWCommon UIUtil FrameXML)
 
 # The libraries whose sources carry point lines (WarcraftXL/Points.h) and no seam call: none
 # today, the camera's UIUtil carrying seams too.
@@ -160,7 +160,8 @@ endif ()
 
 # --- The runtime: core, built here as win-x64 ------------------------------------------------------
 set(WXL_CORE_ARCH "win-x64" CACHE STRING "Architecture of the core build tree" FORCE)
-set(WXL_CORE_MODS OFF CACHE BOOL "The mods core ships are win-x86 only" FORCE)
+set(WXL_CORE_MODS ON CACHE BOOL "The mods core ships for x64: they land beside wxl.lua" FORCE)
+set(WXL_CORE_MODS_DIR "${CMAKE_SOURCE_DIR}/bin/Win/Mods" CACHE PATH "Where core puts its mods: the Mods/ the client scans" FORCE)
 set(WXL_CORE_LUA_MODS "${CMAKE_SOURCE_DIR}/bin/Win/Mods" CACHE PATH "Where core puts wxl.lua: the Mods/ the client scans" FORCE)
 
 # Core links the CRT statically, through CMAKE_MSVC_RUNTIME_LIBRARY. The root of this tree

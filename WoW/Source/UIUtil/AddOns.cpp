@@ -20,6 +20,7 @@
 #include "ThirdParty/zlib/zlib.h"
 #include "WoW/Source/Ui/Types.h"
 #include "WoW/Source/Ui/UIBindings.h"
+#include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00AD17B4
 static const char* s_addOnLoadableTokens[12] = { "LOADABLE", "MISSING", "DISABLED", "BANNED", "CORRUPT", "INSECURE", "DEMAND_LOADED", "INTERFACE_VERSION", "INCOMPATIBLE", "SECURE", "INSECURE", "BANNED" };
@@ -149,6 +150,10 @@ static int32_t DeleteInterfaceAddOns(OS_FILE_DATA& data, void* param) {
 // VERIFY: 012df8c8 auto
 // OFFSET: 0x005F4D90
 void DeleteInterfaceFiles() {
+    if (wxl::seam::AddOns::DeleteInterfaceFiles::Gate()) {
+        return;
+    }
+
     bool deleted = false;
     const char* directories[] = { "Interface\\GlueXML", "Interface\\FrameXML" };
 
