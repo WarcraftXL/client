@@ -869,6 +869,25 @@ void CGxDeviceVk::Draw(CGxBatch* batch, int32_t count) {
     this->IShaderConstantsFlush();
     this->IRsSync(0);
     this->m_vk->draw(this, reinterpret_cast<const wxl_gx_batch*>(batch), count);
+
+    if (count) {
+        // The numbers of this draw in D3D9's terms, as the D3D9 device keeps them, which
+        // ModelBatchDrawn hands a mod (Gx.h); the runtime adds where it was drawn.
+        static const uint32_t s_d3dPrimitive[] = {1, 2, 3, 4, 5, 6}; // D3DPT_POINTLIST .. D3DPT_TRIANGLEFAN
+        uint32_t baseVertexIndex = 0;
+
+        if (!this->m_caps.m_streamOffset && this->m_primVertexFormatBuf[0] && this->m_primVertexFormatBuf[0]->m_itemSize) {
+            baseVertexIndex = this->m_primVertexFormatBuf[0]->m_index / this->m_primVertexFormatBuf[0]->m_itemSize;
+        }
+
+        g_gxLastIndexedDraw.primType = batch->m_primType < 6 ? s_d3dPrimitive[batch->m_primType] : 4;
+        g_gxLastIndexedDraw.baseVertex = static_cast<int32_t>(baseVertexIndex);
+        g_gxLastIndexedDraw.minIndex = batch->m_minIndex;
+        g_gxLastIndexedDraw.vertexCount = batch->m_maxIndex - batch->m_minIndex + 1;
+        g_gxLastIndexedDraw.startIndex = batch->m_start + (this->m_primIndexBuf ? (this->m_primIndexBuf->m_index >> 1) : 0);
+        g_gxLastIndexedDraw.primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
+        g_gxLastIndexedDraw.serial++;
+    }
 }
 
 // As the D3D9 device: the base class only keeps the projection; the native one is D3D's, z in [0, 1].

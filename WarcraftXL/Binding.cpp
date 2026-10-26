@@ -630,6 +630,10 @@ namespace WarcraftXL::Binding {
     // Both D3D9 devices keep the same copy of what they last set (m_deviceStates, the current
     // declaration and streams); spoiling it makes the next IStateSync send everything again.
 
+    int32_t WXL_CALL gx_device_api(void) {
+        return g_theGxDevicePtr ? static_cast<int32_t>(g_theGxDevicePtr->DeviceApi()) : -1;
+    }
+
     void* WXL_CALL gx_d3d9_device(void) {
         if (!g_theGxDevicePtr) {
             return nullptr;

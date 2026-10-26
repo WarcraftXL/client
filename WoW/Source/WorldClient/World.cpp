@@ -1942,6 +1942,7 @@ void CWorldScene::RenderLiquidPass() {
     }
 
     CMap::RenderWaterRipples();
+    wxl::seam::WorldScene::RenderLiquidPass::After();
 }
 
 // VERIFY: 58728bc0 auto
@@ -3583,6 +3584,7 @@ void CWorldScene::RenderDetailDoodads() {
     CWorldScene::RenderOccluders();
     CWorldScene::RenderOcclusionVolumes();
     CWorldScene::RenderDebugFrustum();
+    wxl::seam::WorldScene::RenderDetailDoodads::After();
 }
 
 // VERIFY: 4aaed5dd manual
