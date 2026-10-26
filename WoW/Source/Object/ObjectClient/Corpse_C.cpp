@@ -26,6 +26,7 @@
 #include "WoW/Source/Ui/SpellBookFrame.h"
 #include "WoW/Source/UIUtil/PortraitButton.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "WarcraftXL/Seams.h"
 
 // VERIFY: 91aabd2d manual
 // OFFSET: 0x00705950
@@ -540,6 +541,7 @@ void CGCorpse_C::RenderTargetSelection() const {
     C44Matrix matrix;
     C3Vector center = this->GetPosition();
     CGObject_C::BuildSelectionRotMatrix(&matrix, &center);
+    wxl::seam::Corpse::RenderTargetSelection::Before(this);
     g_theGxDevicePtr->RsPush();
 
     if (CGObject_C::SetCircleRenderStates()) {
@@ -547,6 +549,7 @@ void CGCorpse_C::RenderTargetSelection() const {
     }
 
     g_theGxDevicePtr->RsPop();
+    wxl::seam::Corpse::RenderTargetSelection::After(this);
 }
 
 // VERIFY: f37ff84d manual

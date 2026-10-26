@@ -25,6 +25,7 @@
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Tempest/C33Matrix.h"
 #include "Engine/Source/ShaderEffect/Types.h"
+#include "WarcraftXL/Seams.h"
 
 static const int32_t FADETEX_WIDTH = 64;
 static const int32_t FADETEX_HEIGHT = 8;
@@ -717,12 +718,27 @@ static void ProjectTexRender2d(const CAaBox& box, const CImVector& color, uint32
 // VERIFY: 5f932eb3 manual
 // OFFSET: 0x007E4370
 void ProjectTex::Render2d(const CAaBox& box, const CImVector& color, const C44Matrix* matrix, float fade, uint32_t a5, uint32_t a6, float polygonOffset) {
+    // A selection circle a mod hid is not drawn; one it restyled is drawn with the box and the
+    // colour the runtime points these at.
+    const void* gatedBox = &box;
+    const void* gatedColor = &color;
+    const void* gatedMatrix = matrix;
+    float gatedFade = fade;
+    uint32_t gatedA5 = a5;
+    uint32_t gatedA6 = a6;
+    float gatedPolygonOffset = polygonOffset;
+    if (wxl::seam::ProjectTex::Render2d::Gate(&gatedBox, &gatedColor, &gatedMatrix, &gatedFade, &gatedA5, &gatedA6, &gatedPolygonOffset)) {
+        return;
+    }
+    const CAaBox& drawnBox = *static_cast<const CAaBox*>(gatedBox);
+    const CImVector& drawnColor = *static_cast<const CImVector*>(gatedColor);
+
     C44Matrix texMatrix;
     C44Matrix fadeMatrix;
-    ProjectTex2dMakeMatrices(texMatrix, fadeMatrix, box, matrix, fade, 0);
+    ProjectTex2dMakeMatrices(texMatrix, fadeMatrix, drawnBox, static_cast<const C44Matrix*>(gatedMatrix), gatedFade, 0);
     g_theGxDevicePtr->XformPushAndSet(GxXform_Tex0, texMatrix);
     g_theGxDevicePtr->XformPushAndSet(GxXform_Tex1, fadeMatrix);
-    ProjectTexRender2d(box, color, a5, a6, polygonOffset);
+    ProjectTexRender2d(drawnBox, drawnColor, gatedA5, gatedA6, gatedPolygonOffset);
     GxXformPop(GxXform_Tex0);
     GxXformPop(GxXform_Tex1);
 }

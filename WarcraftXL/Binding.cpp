@@ -843,6 +843,27 @@ namespace WarcraftXL::Binding {
         return WXL_TRUE;
     }
 
+    void* WXL_CALL circle_swap_texture(void* texture) {
+        CTexture* held = CGObject_C::s_selectionTexture;
+        CGObject_C::s_selectionTexture = static_cast<CTexture*>(texture);
+        return held;
+    }
+
+    void* WXL_CALL texture_open(const char* path) {
+        if (!path || !*path) {
+            return nullptr;
+        }
+        // Clamped and loaded later, as the game makes a model's; its load reports into the
+        // client's own status.
+        return CreateTexture(path, &GetGlobalStatusObj());
+    }
+
+    void WXL_CALL texture_close(void* texture) {
+        if (texture) {
+            HandleClose(reinterpret_cast<HOBJECT>(texture));
+        }
+    }
+
     uint32_t WXL_CALL m2_children(const void* model, void** out, uint32_t capacity) {
         uint32_t count = 0;
         for (CM2Model* child = model ? static_cast<const CM2Model*>(model)->m_attachList : nullptr; child; child = child->m_attachNext) {

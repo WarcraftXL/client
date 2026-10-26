@@ -2235,6 +2235,7 @@ void CGUnit_C::RenderAutoTrackCursor() {
         return;
     }
 
+    wxl::seam::Unit::RenderAutoTrackCursor::Before(this);
     int32_t phase = OsGetAsyncTimeMs() % s_trackCursorPeriod;
     float size = (sinf(phase * 6.2831855f / static_cast<int32_t>(s_trackCursorPeriod)) + 1.0f) * 0.5f * (s_trackCursorMaxSize - s_trackCursorMinSize) + s_trackCursorMinSize;
     C3Vector position = this->m_movementData.GetPosition(CGUnit_C::s_trackingPosition);
@@ -2253,6 +2254,7 @@ void CGUnit_C::RenderAutoTrackCursor() {
     }
 
     g_theGxDevicePtr->RsPop();
+    wxl::seam::Unit::RenderAutoTrackCursor::After(this);
 }
 
 // VERIFY: dc8d76e1 auto
@@ -23184,6 +23186,7 @@ void CGUnit_C::RenderTargetSelection() const {
         return;
     }
 
+    wxl::seam::Unit::RenderTargetSelection::Before(this);
     C3Vector position = const_cast<CGUnit_C*>(this)->GetModelPosition();
     float radius = this->m_selectionRadius;
     CAaBox box;
@@ -23235,6 +23238,7 @@ void CGUnit_C::RenderTargetSelection() const {
     }
 
     g_theGxDevicePtr->RsPop();
+    wxl::seam::Unit::RenderTargetSelection::After(this);
 }
 
 // VERIFY: 652f3dea manual
@@ -23277,6 +23281,7 @@ void CGUnit_C::RenderPetTargetSelection() const {
 
     C44Matrix matrix;
     CGObject_C::BuildSelectionRotMatrix(&matrix, &position);
+    wxl::seam::Unit::RenderPetTargetSelection::Before(this);
     g_theGxDevicePtr->RsPush();
 
     if (CGObject_C::SetCircleRenderStates()) {
@@ -23284,6 +23289,7 @@ void CGUnit_C::RenderPetTargetSelection() const {
     }
 
     g_theGxDevicePtr->RsPop();
+    wxl::seam::Unit::RenderPetTargetSelection::After(this);
 }
 
 // VERIFY: 24ac8386 auto
