@@ -122,8 +122,9 @@ device, `Engine/Source/Gx/CGxDeviceVk`, an adapter over the runtime's renderer. 
 fullscreen (borderless), resizes and minimising, the frame, the world and the game's interface,
 the textures the engine draws into (the minimap, portraits, full-screen effects), Dear ImGui and the
 pointer go through Vulkan; the client's shaders are their records translated by the runtime from
-DX9 bytecode, once per machine. A machine without Vulkan 1.3 stays on D3D9, and the log says
-why. Two console commands serve the renderer's tests: `gxVkSimulateLoss` (the Vulkan device lost and
+DX9 bytecode, once per machine. Screenshots and the portraits read the frame back as on D3D9;
+`gxMultisample` multisamples it, the video options offering the counts the Vulkan device has. A
+machine without Vulkan 1.3 stays on D3D9, and the log says why. Two console commands serve the renderer's tests: `gxVkSimulateLoss` (the Vulkan device lost and
 made again) and `gxCapture` (the next frame of the D3D9 device recorded to `WarcraftXL\captures\`).
 
 The signature checks of the original are kept (`WOWDECOMP_DISABLE_SIGNATURE_CHECKS=OFF`): modified
