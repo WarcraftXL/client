@@ -2152,6 +2152,12 @@ void CGWorldFrame::OnMouseModeRelative() {
 // VERIFY: bef9479f manual
 // OFFSET: 0x004F7880
 void CGWorldFrame::PerformDefaultAction(MOUSEBUTTON button) {
+    void* self = this;
+    uint32_t gatedButton = static_cast<uint32_t>(button);
+    if (wxl::seam::WorldFrame::PerformDefaultAction::Gate(&self, &gatedButton)) {
+        return;
+    }
+
     CGPlayer_C* player = static_cast<CGPlayer_C*>(ClntObjMgrObjectPtr(ClntObjMgrGetActivePlayer(), TYPE_PLAYER, __FILE__, __LINE__));
 
     if (!player || player->m_unit->m_unitFieldCharmedby) {

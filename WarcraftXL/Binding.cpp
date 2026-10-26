@@ -67,6 +67,7 @@
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/Ui/ChatFrame.h"
 #include "WoW/Source/Ui/WorldFrame.h"
+#include "WoW/Source/Ui/NamePlateFrame.h"
 #include "WoW/Source/UIUtil/Camera.h"
 #include "WoW/Source/UIUtil/InputControl.h"
 #include "Engine/Source/Frame/CSimpleTop.h"
@@ -1402,6 +1403,43 @@ namespace WarcraftXL::Binding {
         return object && static_cast<const CGUnit_C*>(Object(object))->IsOutdoors() ? WXL_TRUE : WXL_FALSE;
     }
 
+    wxl_bool WXL_CALL unit_can_attack(const void* unit, const void* target) {
+        if (!unit || !target) {
+            return WXL_FALSE;
+        }
+        return static_cast<const CGUnit_C*>(Object(unit))->CanAttack(static_cast<const CGUnit_C*>(Object(target)))
+                   ? WXL_TRUE
+                   : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL unit_can_interact(const void* unit, const void* target) {
+        if (!unit || !target) {
+            return WXL_FALSE;
+        }
+        return static_cast<const CGUnit_C*>(Object(unit))->CanInteractNow(static_cast<const CGUnit_C*>(Object(target)))
+                   ? WXL_TRUE
+                   : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL gameobject_can_use(const void* object) {
+        // As CGGameObject_C_TypeBase::CanChangeCursor decides the cursor: highlighted, and usable
+        // now or only too far.
+        if (!object) {
+            return WXL_FALSE;
+        }
+        const CGGameObject_C* go = static_cast<const CGGameObject_C*>(Object(object));
+        if (!go->CanHighlight() || !go->m_typeData) {
+            return WXL_FALSE;
+        }
+        GAME_ERROR_TYPE error = static_cast<GAME_ERROR_TYPE>(0);
+        float distance = 0.0f;
+        const char* text = nullptr;
+        if (go->m_typeData->CanUseNow(&error, &distance, &text)) {
+            return WXL_TRUE;
+        }
+        return error == ERR_USE_TOO_FAR ? WXL_TRUE : WXL_FALSE;
+    }
+
     const void* WXL_CALL item_stats(const void* object) {
         return object ? static_cast<const CGItem_C*>(Object(object))->GetStats() : nullptr;
     }
@@ -1607,6 +1645,52 @@ namespace WarcraftXL::Binding {
         }
         control->m_pendingDefaultAction = INPUT_RELEASE_NONE;
         control->UnsetControlBit(INPUT_MOUSE_LOOK_MASK, OsGetAsyncTimeMs(), 0);
+    }
+
+    uint32_t WXL_CALL input_click_hit(const void* frame, uint64_t* guid, wxl_vec3* point) {
+        // As CGWorldFrame::PerformDefaultAction reads it.
+        if (guid) {
+            *guid = 0;
+        }
+        if (point) {
+            *point = wxl_vec3{ 0.0f, 0.0f, 0.0f };
+        }
+        if (!frame) {
+            return 0;
+        }
+        const CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
+        if (!player || player->m_unit->m_unitFieldCharmedby) {
+            return 0;
+        }
+        if (const CGNamePlateFrame* plate = CGNamePlateFrame::GetNamePlateFocus()) {
+            if (guid) {
+                *guid = plate->m_guid.m_guid;
+            }
+            return 4; // a name plate (wxl_world_hit)
+        }
+        const CGWorldFrame* world = static_cast<const CGWorldFrame*>(frame);
+        const uint32_t kind = world->m_defaultActionHitKind;
+        if (kind > CGWorldFrame::HIT_WORLD_OBJECT) {
+            return 0;
+        }
+        if (guid) {
+            *guid = world->m_defaultActionHit.m_guid.m_guid;
+        }
+        if (point) {
+            *point = wxl_vec3{ world->m_defaultActionHit.m_point.x, world->m_defaultActionHit.m_point.y,
+                               world->m_defaultActionHit.m_point.z };
+        }
+        if (guid && (kind == CGWorldFrame::HIT_GROUND || kind == CGWorldFrame::HIT_WORLD_OBJECT)) {
+            const uint32_t high = static_cast<uint32_t>(*guid >> 32);
+            if ((high & 0xF0000000u) != 0x10000000u || (high & 0x0FF00000u) != 0x0FC00000u) {
+                *guid = 0;
+            }
+        }
+        return kind;
+    }
+
+    wxl_bool WXL_CALL input_spell_targeting(void) {
+        return Spell_C_IsTargeting() ? WXL_TRUE : WXL_FALSE;
     }
 
     // --- pose.def -------------------------------------------------------------------------------
