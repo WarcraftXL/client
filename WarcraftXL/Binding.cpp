@@ -84,6 +84,7 @@
 #include "WoW/Source/WorldClient/MapObjGroup.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "wxl/core/camera_facing.hpp"
 #include "wxl/core/gpu.hpp"
 #include "wxl/core/filestack.hpp"
 #include "wxl/core/storm.hpp"
@@ -1590,7 +1591,21 @@ namespace WarcraftXL::Binding {
             return;
         }
         cam->m_position = C3Vector{ view->position.x, view->position.y, view->position.z };
-        cam->SetFacing(forward);
+        if (view->roll != 0.0f) {
+            // The rows SetFacing(forward) builds, turned around the forward by the roll: the view
+            // matrix takes its up from the third (SetGxProjectionAndView), so the world and the
+            // pick turn with it.
+            wxl_vec3 rows[3];
+            if (!wxl::core::camera_facing::Facing(view->forward, view->roll, rows)) {
+                return;
+            }
+            C33Matrix& m = cam->m_facing;
+            m.a0 = rows[0].x; m.a1 = rows[0].y; m.a2 = rows[0].z;
+            m.b0 = rows[1].x; m.b1 = rows[1].y; m.b2 = rows[1].z;
+            m.c0 = rows[2].x; m.c1 = rows[2].y; m.c2 = rows[2].z;
+        } else {
+            cam->SetFacing(forward);
+        }
         if (cam->m_relativeTo) {
             // The facing is kept in the parent's frame, which Forward() takes back to the world:
             // each row times the transpose of ParentToWorld.
