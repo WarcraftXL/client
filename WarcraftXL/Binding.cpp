@@ -865,6 +865,29 @@ namespace WarcraftXL::Binding {
         }
     }
 
+    void* WXL_CALL cvar_lookup(const char* name) {
+        return CVar::Lookup(name);
+    }
+
+    void* WXL_CALL cvar_register(const char* name, const char* help, uint32_t flags, const char* value, void* callback, uint32_t category) {
+        using Callback = bool (*)(CVar*, const char*, const char*, void*);
+        return CVar::Register(name, help, flags, value, reinterpret_cast<Callback>(callback), category, false, nullptr, false);
+    }
+
+    wxl_bool WXL_CALL cvar_set(void* cvar, const char* value) {
+        if (!cvar || !value) {
+            return WXL_FALSE;
+        }
+        static_cast<CVar*>(cvar)->Set(value, true, false, false, true);
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL cvar_write_flags(void* cvar, uint32_t flags) {
+        if (cvar) {
+            static_cast<CVar*>(cvar)->m_flags = flags;
+        }
+    }
+
     uint32_t WXL_CALL m2_children(const void* model, void** out, uint32_t capacity) {
         uint32_t count = 0;
         for (CM2Model* child = model ? static_cast<const CM2Model*>(model)->m_attachList : nullptr; child; child = child->m_attachNext) {

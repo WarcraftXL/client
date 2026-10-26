@@ -727,6 +727,8 @@ void CVar::DeleteCharacterCVars() {
             var = s_registeredCVars.Next(var);
         }
     }
+
+    wxl::seam::ConsoleVar::DeleteCharacterCVars::After();
 }
 
 // VERIFY: 318d83a3 manual
@@ -741,6 +743,8 @@ void CVar::DeleteAccountCVars() {
             var = s_registeredCVars.Next(var);
         }
     }
+
+    wxl::seam::ConsoleVar::DeleteAccountCVars::After();
 }
 
 // VERIFY: 047464cf auto
@@ -854,6 +858,7 @@ CVar* CVar::Register(const char* name, const char* help, uint32_t flags, const c
 // VERIFY: ff762198 auto
 // OFFSET: 0x00768340
 void CVar::Initialize(const char* fileName) {
+    wxl::seam::ConsoleVar::Initialize::Before(fileName);
     CVar::s_configFile = fileName;
     CVar::m_initialized = true;
 
@@ -868,6 +873,7 @@ void CVar::Initialize(const char* fileName) {
     ConsoleCommandRegister("cvarlist", CvarListCommandHandler, CATEGORY_DEFAULT, "List cvars");
 
     CVar::Load(CVar::s_configFile);
+    wxl::seam::ConsoleVar::Initialize::After(fileName);
 }
 
 // VERIFY: 23fe3f84 auto
