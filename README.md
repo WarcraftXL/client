@@ -116,6 +116,12 @@ Win32; the seam calls compile to nothing there.
 4. Start `WowClient64.exe`. The runtime's log is `Logs/WarcraftXL.log` next to it; the client's own
    logs are in the same folder.
 
+D3D9 is the default device. `SET gxApi "Vulkan"` in `WTF/Config.wtf`, `-vulkan` on the command line
+or `[gx] api = vulkan` in `WarcraftXL.ini` (which also takes a D3D9Ex request) choose the Vulkan
+device, `Engine/Source/Gx/CGxDeviceVk`, an adapter over the runtime's renderer: it makes the Vulkan
+device and logs it, then the client creates D3D9 in its place, since the renderer does not draw yet.
+A machine without Vulkan 1.3 stays on D3D9, and the log says why.
+
 The signature checks of the original are kept (`WOWDECOMP_DISABLE_SIGNATURE_CHECKS=OFF`): modified
 interface files need the option, or a mod such as core's `wxl.glue-unlock` on the stock client.
 
@@ -166,7 +172,8 @@ are two different columns.
 ## 📂 Layout
 
 ```
-WarcraftXL/              the integration: CMake, Init.h/.cpp (WarcraftXLInit), Seams.h (adapters)
+WarcraftXL/              the integration: CMake, Init.h/.cpp (WarcraftXLInit), Seams.h (adapters),
+                         GxVulkan.h (the runtime's Vulkan renderer, for ConsoleDevice and CGxDeviceVk)
 WoW/                     the game: objects, world, interface, networking, database, glue screens
 Engine/                  the engine: storage, graphics, sound, scripting, frames
 Tools/                   WowClient (the executable with the crash logger), the Xvid decoder
