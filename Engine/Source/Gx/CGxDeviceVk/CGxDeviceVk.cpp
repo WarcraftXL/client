@@ -2,9 +2,17 @@
 #if defined(WOWDECOMP_ARCH_64)
 
 #include "Engine/Source/Gx/CGxDeviceVk/CGxDeviceVk.h"
+#include <cmath>
+#include <cstring>
 #include <new>
+#include "Engine/Source/Event/Event.h"
+#include "Engine/Source/Gx/CGxBuf.h"
+#include "Engine/Source/Gx/CGxPool.h"
+#include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Gx/Gx.h"
+#include "Engine/Source/Os/Gui.h"
 #include "Engine/Source/Storm/H/storm.h"
+#include "GameVersion.h"
 #include "WarcraftXL/GxVulkan.h"
 #include "wxl/engine/gx.hpp"
 
@@ -20,92 +28,992 @@ CGxDevice* CreateCGxDeviceVk() {
 
 CGxDeviceVk::CGxDeviceVk() {
     this->m_api = GxApi_Vulkan;
+    this->m_caps.m_colorFormat = GxCF_argb;
+    this->m_caps.unk_0018 = 1;
+    this->DeviceCreatePools();
+    this->DeviceCreateStreamBufs();
 }
 
 CGxDeviceVk::~CGxDeviceVk() {
     this->DeviceDestroy();
 }
 
+// --- The window ---------------------------------------------------------------------------------
+
+static ATOM WindowClassCreateVk() {
+    HINSTANCE instance = GetModuleHandleA(nullptr);
+
+    WNDCLASSEXA windowClass;
+    memset(&windowClass, 0, sizeof(windowClass));
+    windowClass.cbSize = sizeof(windowClass);
+    windowClass.style = CS_OWNDC;
+    windowClass.lpfnWndProc = CGxDeviceVk::WindowProcVk;
+    windowClass.hInstance = instance;
+    windowClass.lpszClassName = "GxWindowClassVk";
+    windowClass.hIcon = static_cast<HICON>(LoadImageA(instance, "BlizzardIcon.ico", IMAGE_ICON, 0, 0, LR_DEFAULTSIZE));
+    windowClass.hCursor = LoadCursorA(instance, "BlizzardCursor.cur");
+
+    if (!windowClass.hCursor) {
+        windowClass.hCursor = LoadCursorA(nullptr, IDC_ARROW);
+    }
+
+    return RegisterClassExA(&windowClass);
+}
+
+// As the D3D9 device's window, except fullscreen: a borderless window over the monitor, at its
+// mode, rather than an exclusive display mode. The scene is then the monitor's size.
+int32_t CGxDeviceVk::ICreateWindow(CGxFormat& format) {
+    HINSTANCE instance = GetModuleHandleA(nullptr);
+    DWORD style;
+
+    if (!format.m_window) {
+        style = WS_POPUP | WS_CLIPSIBLINGS | WS_CLIPCHILDREN | WS_SYSMENU;
+    } else if (format.m_maximize == 1) {
+        style = WS_POPUP | WS_VISIBLE;
+    } else if (format.m_maximize == 2) {
+        style = WS_POPUP;
+    } else {
+        style = WS_OVERLAPPEDWINDOW | WS_CLIPSIBLINGS | WS_CLIPCHILDREN;
+    }
+
+    float aspectRatio = 0.0f;
+
+    if (format.m_aspect && format.m_size.x && format.m_size.y) {
+        aspectRatio = static_cast<float>(format.m_size.x) / format.m_size.y;
+    }
+
+    RECT clientRect;
+    clientRect.left = 0;
+    clientRect.top = 0;
+    clientRect.right = format.m_size.x;
+    clientRect.bottom = format.m_size.y;
+    AdjustWindowRectEx(&clientRect, style, FALSE, 0);
+
+    CGxDevice::s_clientAdjust.x = clientRect.right - format.m_size.x - clientRect.left;
+    CGxDevice::s_clientAdjust.y = clientRect.bottom - format.m_size.y - clientRect.top;
+
+    int32_t x = format.m_pos.x;
+    int32_t y = format.m_pos.y;
+    int32_t width = format.m_size.x;
+    int32_t height = format.m_size.y;
+
+    if (!format.m_window) {
+        // The monitor the window would have been on, whole.
+        POINT at = { format.m_pos.x, format.m_pos.y };
+        MONITORINFO monitor;
+        monitor.cbSize = sizeof(monitor);
+
+        if (GetMonitorInfoA(MonitorFromPoint(at, MONITOR_DEFAULTTOPRIMARY), &monitor)) {
+            x = monitor.rcMonitor.left;
+            y = monitor.rcMonitor.top;
+            width = monitor.rcMonitor.right - monitor.rcMonitor.left;
+            height = monitor.rcMonitor.bottom - monitor.rcMonitor.top;
+        }
+    } else if (format.m_maximize == 1) {
+        format.m_pos.x = 0;
+        format.m_pos.y = 0;
+        format.m_size.x = GetSystemMetrics(SM_CXSCREEN);
+        format.m_size.y = GetSystemMetrics(SM_CYSCREEN);
+        x = 0;
+        y = 0;
+        width = format.m_size.x;
+        height = format.m_size.y;
+    } else {
+        RECT windowRect;
+        windowRect.left = 0;
+        windowRect.top = 0;
+        windowRect.right = format.m_size.x;
+        windowRect.bottom = format.m_size.y;
+
+        if (CGxDevice::AdjustWindowRectToWorkArea(aspectRatio, &CGxDevice::s_clientAdjust, &windowRect)) {
+            format.m_pos.x = windowRect.left;
+            format.m_pos.y = windowRect.top;
+            format.m_size.x = windowRect.right - windowRect.left;
+            format.m_size.y = windowRect.bottom - windowRect.top;
+        } else {
+            format.m_pos.x = 0;
+            format.m_pos.y = 0;
+        }
+
+        x = format.m_pos.x;
+        y = format.m_pos.y;
+        width = format.m_size.x;
+        height = format.m_size.y;
+
+        if (width && height) {
+            width += CGxDevice::s_clientAdjust.x;
+            height += CGxDevice::s_clientAdjust.y;
+        }
+    }
+
+    if (!width) {
+        width = CW_USEDEFAULT;
+    }
+
+    if (!height) {
+        height = CW_USEDEFAULT;
+    }
+
+    this->m_hwnd = CreateWindowExA(WS_EX_APPWINDOW, "GxWindowClassVk", CLIENT_NAME, style, x, y, width, height, nullptr, nullptr, instance, this);
+
+    if (this->m_hwnd && format.m_maximize != 2) {
+        ShowWindow(this->m_hwnd, SW_SHOWNORMAL);
+    }
+
+    return this->m_hwnd != nullptr;
+}
+
+LRESULT CALLBACK CGxDeviceVk::WindowProcVk(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
+    CGxDeviceVk* device = reinterpret_cast<CGxDeviceVk*>(GetWindowLongPtrA(hwnd, GWLP_USERDATA));
+
+    switch (message) {
+        case WM_CREATE:
+            SetWindowLongPtrA(hwnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(reinterpret_cast<CREATESTRUCTA*>(lparam)->lpCreateParams));
+            return 0;
+
+        case WM_DESTROY:
+            if (device) {
+                device->DeviceWM(GxWM_Destroy, 0, 0);
+            }
+
+            return 0;
+
+        case WM_SIZE: {
+            if (!device) {
+                break;
+            }
+
+            CRect rect;
+            rect.minY = 0.0f;
+            rect.minX = 0.0f;
+            rect.maxY = HIWORD(lparam);
+            rect.maxX = LOWORD(lparam);
+
+            uint32_t resizeType = 0;
+
+            if (wparam == SIZE_MINIMIZED) {
+                resizeType = Gx_SizeMinimized;
+            } else if (wparam == SIZE_MAXHIDE) {
+                resizeType = Gx_SizeMaxHide;
+            }
+
+            device->DeviceWM(GxWM_Size, reinterpret_cast<uintptr_t>(&rect), resizeType);
+            break;
+        }
+
+        case WM_ACTIVATE:
+            // A borderless fullscreen window is not taken away by the system as an exclusive one
+            // is: it minimises itself when it loses the focus, and comes back on any activation,
+            // a click included. Its WM_SIZE tells the engine.
+            if (device && !device->IDevIsWindowed()) {
+                if (LOWORD(wparam) == WA_INACTIVE) {
+                    ShowWindowAsync(hwnd, SW_MINIMIZE);
+                } else if (IsIconic(hwnd)) {
+                    ShowWindowAsync(hwnd, SW_RESTORE);
+                }
+            }
+
+            break;
+
+        case WM_SETFOCUS:
+            if (device) {
+                device->DeviceWM(GxWM_SetFocus, 0, 0);
+            }
+
+            return 0;
+
+        case WM_KILLFOCUS:
+            if (device) {
+                device->DeviceWM(GxWM_KillFocus, 0, 0);
+            }
+
+            return 0;
+
+        case WM_PAINT: {
+            PAINTSTRUCT paint;
+            BeginPaint(hwnd, &paint);
+            EndPaint(hwnd, &paint);
+            return 0;
+        }
+
+        case WM_ERASEBKGND:
+            return 0;
+
+        case WM_SETCURSOR:
+            if (!device) {
+                return DefWindowProcA(hwnd, message, wparam, lparam);
+            }
+
+            if (device->m_vkMade && LOWORD(lparam) == HTCLIENT) {
+                device->m_vk->cursor_set(device);
+                return 1;
+            }
+
+            break;
+
+        case WM_DISPLAYCHANGE:
+            if (device && !device->IDevIsWindowed()) {
+                // The desktop's mode changed under the borderless window: it covers the monitor again.
+                MONITORINFO monitor;
+                monitor.cbSize = sizeof(monitor);
+
+                if (GetMonitorInfoA(MonitorFromWindow(hwnd, MONITOR_DEFAULTTOPRIMARY), &monitor)) {
+                    SetWindowPos(hwnd, nullptr, monitor.rcMonitor.left, monitor.rcMonitor.top, monitor.rcMonitor.right - monitor.rcMonitor.left, monitor.rcMonitor.bottom - monitor.rcMonitor.top, SWP_NOZORDER | SWP_NOACTIVATE);
+                }
+
+                CRect rect;
+                rect.minY = 0.0f;
+                rect.minX = 0.0f;
+                rect.maxY = HIWORD(lparam);
+                rect.maxX = LOWORD(lparam);
+                device->DeviceWM(GxWM_DisplayChange, reinterpret_cast<uintptr_t>(&rect), 0);
+            }
+
+            break;
+
+        case WM_SYSCOMMAND:
+            if (wparam == SC_SCREENSAVE || wparam == SC_MONITORPOWER) {
+                return 0;
+            }
+
+            break;
+
+        case WM_SIZING: {
+            RECT* sizingRect = reinterpret_cast<RECT*>(lparam);
+
+            CiRect rect;
+            rect.minX = sizingRect->left;
+            rect.minY = sizingRect->top;
+            rect.maxX = sizingRect->right;
+            rect.maxY = sizingRect->bottom;
+
+            if (rect.maxX - rect.minX <= 0 || rect.maxY - rect.minY <= 0) {
+                return 0;
+            }
+
+            switch (wparam) {
+                case WMSZ_LEFT:
+                    CGxDevice::ClampRectLeft(rect);
+                    CGxDevice::ClampRectTopByAspect(rect);
+                    break;
+
+                case WMSZ_RIGHT:
+                    CGxDevice::ClampRectRight(rect);
+                    CGxDevice::ClampRectBottomByAspect(rect);
+                    break;
+
+                case WMSZ_TOP:
+                    CGxDevice::ClampRectTop(rect);
+                    CGxDevice::ClampRectLeftByAspect(rect);
+                    break;
+
+                case WMSZ_TOPLEFT:
+                    CGxDevice::ClampRectTop(rect);
+                    CGxDevice::ClampRectLeft(rect);
+                    CGxDevice::ClampRectTopByAspect(rect);
+                    CGxDevice::ClampRectLeftByAspect(rect);
+                    break;
+
+                case WMSZ_TOPRIGHT:
+                    CGxDevice::ClampRectTop(rect);
+                    CGxDevice::ClampRectRight(rect);
+                    CGxDevice::ClampRectTopByAspect(rect);
+                    CGxDevice::ClampRectRightByAspect(rect);
+                    break;
+
+                case WMSZ_BOTTOM:
+                    CGxDevice::ClampRectBottom(rect);
+                    CGxDevice::ClampRectRightByAspect(rect);
+                    break;
+
+                case WMSZ_BOTTOMLEFT:
+                    CGxDevice::ClampRectBottom(rect);
+                    CGxDevice::ClampRectLeft(rect);
+                    CGxDevice::ClampRectLeftByAspect(rect);
+                    CGxDevice::ClampRectBottomByAspect(rect);
+                    break;
+
+                case WMSZ_BOTTOMRIGHT:
+                    CGxDevice::ClampRectBottom(rect);
+                    CGxDevice::ClampRectRight(rect);
+                    CGxDevice::ClampRectBottomByAspect(rect);
+                    CGxDevice::ClampRectRightByAspect(rect);
+                    break;
+
+                default:
+                    break;
+            }
+
+            sizingRect->left = rect.minX;
+            sizingRect->bottom = rect.maxY;
+            sizingRect->top = rect.minY;
+            sizingRect->right = rect.maxX;
+
+            return 1;
+        }
+
+        default:
+            break;
+    }
+
+    if (device && device->m_windowProc) {
+        return device->m_windowProc(hwnd, message, wparam, lparam);
+    }
+
+    return DefWindowProcA(hwnd, message, wparam, lparam);
+}
+
+void CGxDeviceVk::ISetWindowFocus(int32_t focus) {
+    this->m_windowFocus = focus;
+
+    if (focus && !this->m_format.m_window && this->m_hwnd) {
+        RECT rect;
+        GetWindowRect(this->m_hwnd, &rect);
+        ClipCursor(&rect);
+    }
+}
+
+// --- The device ---------------------------------------------------------------------------------
+
 int32_t CGxDeviceVk::DeviceCreate(GxWindowProc windowProc, const CGxFormat& format) {
-    (void)windowProc;
-    (void)format;
+    this->m_vk = WarcraftXL::GxVulkan();
 
-    const wxl_gx_vk_backend* backend = WarcraftXL::GxVulkan();
-
-    if (!backend) {
+    if (!this->m_vk) {
         GxLog("CGxDeviceVk::DeviceCreate(): the runtime has no Vulkan renderer");
         return 0;
     }
 
     // The renderer reads this device through the engine layouts it was built with; a runtime from
     // another tree reads another layout.
-    if (backend->device_layout_hash != wxl::engine::CGxDevice::kLayoutHash) {
+    if (this->m_vk->device_layout_hash != wxl::engine::CGxDevice::kLayoutHash) {
         GxLog("CGxDeviceVk::DeviceCreate(): the runtime reads another CGxDevice layout (%016llx, this client %016llx)",
-              static_cast<unsigned long long>(backend->device_layout_hash),
+              static_cast<unsigned long long>(this->m_vk->device_layout_hash),
               static_cast<unsigned long long>(wxl::engine::CGxDevice::kLayoutHash));
+        this->m_vk = nullptr;
+        return 0;
+    }
+
+    this->m_ownhwnd = 1;
+
+    HDC dc = GetDC(nullptr);
+
+    if (GetDeviceGammaRamp(dc, &this->m_systemGammaRamp)) {
+        this->m_gammaRamp = this->m_systemGammaRamp;
+    }
+
+    ReleaseDC(nullptr, dc);
+
+    this->m_hwndClass = WindowClassCreateVk();
+
+    if (!this->m_hwndClass) {
+        GxLog("CGxDeviceVk::DeviceCreate(): the window class could not be registered");
+        this->DeviceDestroy();
+        return 0;
+    }
+
+    // CGxDevice::DeviceCreate goes on to DeviceSetFormat, which makes the window and the device.
+    if (CGxDevice::DeviceCreate(windowProc, format)) {
+        return 1;
+    }
+
+    this->DeviceDestroy();
+    return 0;
+}
+
+int32_t CGxDeviceVk::DeviceCreate(void* window, const CGxFormat& format) {
+    // A window of the caller's (a tool embedding the engine): the client itself never asks.
+    (void)window;
+    (void)format;
+    GxLog("CGxDeviceVk::DeviceCreate(): a window of the caller's is not supported by the Vulkan device");
+    return 0;
+}
+
+void CGxDeviceVk::IDestroyVk() {
+    for (uint32_t i = 0; i < 2; i++) {
+        if (CGxDevice::s_uiVertexShader[i]) {
+            g_theGxDevicePtr->ShaderDestroy(CGxDevice::s_uiVertexShader[i]);
+        }
+    }
+
+    if (CGxDevice::s_uiPixelShader) {
+        g_theGxDevicePtr->ShaderDestroy(CGxDevice::s_uiPixelShader);
+    }
+
+    this->ICursorDestroy();
+}
+
+int32_t CGxDeviceVk::DeviceSetFormat(const CGxFormat& format) {
+    CGxDevice::Log("CGxDeviceVk::DeviceSetFormat():");
+    this->Log(format);
+
+    if (!this->m_vk) {
         return 0;
     }
 
     char why[512] = {};
 
-    if (backend->device_create(this, nullptr, why, sizeof(why)) != WXL_OK) {
-        GxLog("CGxDeviceVk::DeviceCreate(): %s", why);
-        return 0;
+    if (this->m_hwnd) {
+        ShowWindow(this->m_hwnd, SW_HIDE);
     }
 
-    // A runtime that draws through Vulkan, behind a client whose adapter does not forward the
-    // device's work yet: the device it made is released, and D3D9 takes its place.
-    backend->device_destroy(this);
-    GxLog("CGxDeviceVk::DeviceCreate(): this client does not forward its device to Vulkan yet");
+    // No frame is drawn while the window is made again: the window's messages meanwhile only note its size.
+    this->m_context = 0;
+    this->IDestroyVk();
+
+    // The surface on the old window goes before the window does.
+    if (this->m_vkMade) {
+        this->m_vk->device_set_window(this, nullptr, why, sizeof(why));
+    }
+
+    if (this->m_hwnd) {
+        DestroyWindow(this->m_hwnd);
+    }
+
+    this->m_hwnd = nullptr;
+    this->m_format = format;
+
+    CGxFormat createFormat = format;
+
+    if (this->ICreateWindow(createFormat)) {
+        wxl_result made;
+
+        if (this->m_vkMade) {
+            made = this->m_vk->device_set_window(this, this->m_hwnd, why, sizeof(why));
+        } else {
+            made = this->m_vk->device_create(this, this->m_hwnd, why, sizeof(why));
+            this->m_vkMade = made == WXL_OK;
+        }
+
+        if (made == WXL_OK) {
+            this->m_context = 1;
+            this->m_intF5C = 0;
+            this->m_vk->device_caps(this);
+            this->Log(this->m_caps);
+
+            if (CGxDevice::DeviceSetFormat(createFormat)) {
+                this->m_vk->gamma_changed(this);
+                this->ICursorCreate(createFormat);
+
+                // As the D3D9 device: the interface's shaders, which this device does not take yet
+                // (they stay invalid, and the engine draws without them).
+                g_theGxDevicePtr->ShaderCreate(CGxDevice::s_uiVertexShader, GxSh_Vertex, "Shaders\\Vertex", "UI", 2);
+                g_theGxDevicePtr->ShaderCreate(&CGxDevice::s_uiPixelShader, GxSh_Pixel, "Shaders\\Pixel", "UI", 1);
+
+                // The window's first WM_SIZE came before the device was made: the size it has now.
+                RECT client;
+
+                if (GetClientRect(this->m_hwnd, &client)) {
+                    CRect rect;
+                    rect.minY = 0.0f;
+                    rect.minX = 0.0f;
+                    rect.maxY = static_cast<float>(client.bottom - client.top);
+                    rect.maxX = static_cast<float>(client.right - client.left);
+                    this->DeviceSetDefWindow(rect);
+                }
+
+                this->ISetWindowFocus(1);
+                this->ISceneBegin();
+                return 1;
+            }
+        } else {
+            GxLog("CGxDeviceVk::DeviceSetFormat(): %s", why);
+        }
+    }
+
+    CGxDevice::Log("CGxDeviceVk::DeviceSetFormat(): unable to set format!");
+    this->IDestroyVk();
+
+    if (this->m_vkMade && this->m_hwnd) {
+        this->m_vk->device_set_window(this, nullptr, why, sizeof(why));
+    }
+
+    if (this->m_hwnd) {
+        DestroyWindow(this->m_hwnd);
+    }
+
+    this->m_hwnd = nullptr;
+    this->m_context = 0;
+
     return 0;
 }
 
 void CGxDeviceVk::DeviceDestroy() {
-    if (const wxl_gx_vk_backend* backend = WarcraftXL::GxVulkan()) {
-        backend->device_destroy(this);
+    CGxDevice::DeviceDestroy();
+    this->IDestroyVk();
+
+    if (this->m_vk && this->m_vkMade) {
+        this->ITexForceRecreation(1);
+        this->m_vk->device_destroy(this);
+        this->m_vkMade = false;
     }
 
-    CGxDevice::DeviceDestroy();
+    if (this->m_hwnd && this->m_ownhwnd) {
+        DestroyWindow(this->m_hwnd);
+        this->m_hwnd = nullptr;
+    }
+
+    if (this->m_hwndClass) {
+        UnregisterClassA(reinterpret_cast<const char*>(static_cast<uintptr_t>(this->m_hwndClass)), GetModuleHandleA(nullptr));
+        this->m_hwndClass = 0;
+    }
+
+    this->m_context = 0;
 }
 
-// What follows is reached only through a device DeviceCreate accepted, which it never does yet.
+void CGxDeviceVk::DeviceEvictResources() {
+}
 
-void CGxDeviceVk::IRsSendToHw(EGxRenderState which) {
-    (void)which;
+void CGxDeviceVk::DeviceSetBaseMipLevel(uint32_t level) {
+    this->ITexForceRecreation(1);
+    CGxDevice::DeviceSetBaseMipLevel(level);
+}
+
+void CGxDeviceVk::DeviceSetGamma(float gamma) {
+    CGxDevice::DeviceSetGamma(gamma);
+
+    if (this->m_vkMade) {
+        this->m_vk->gamma_changed(this);
+    }
+}
+
+void CGxDeviceVk::DeviceSetGamma(const CGxGammaRamp& ramp) {
+    CGxDevice::DeviceSetGamma(ramp);
+
+    if (this->m_vkMade) {
+        this->m_vk->gamma_changed(this);
+    }
 }
 
 void* CGxDeviceVk::DeviceWindow() {
-    return nullptr;
+    return this->m_hwnd;
 }
 
 void CGxDeviceVk::DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels) {
-    (void)rect;
-    (void)pixels;
+    // The scene is not read back yet: the rectangle's pixels, black and transparent, so a caller
+    // that sizes its work by them stays in bounds.
+    this->ClampRectToWindow(rect);
+    uint32_t width = rect.maxX > rect.minX ? rect.maxX - rect.minX : 0;
+    uint32_t height = rect.maxY > rect.minY ? rect.maxY - rect.minY : 0;
+    pixels.SetCount(width * height);
+
+    if (width * height) {
+        memset(pixels.Ptr(), 0, width * height * sizeof(CImVector));
+    }
 }
 
 void CGxDeviceVk::DeviceReadDepths(CiRect& rect, TSGrowableArray<float>& depths) {
     (void)rect;
-    (void)depths;
+    depths.SetCount(0);
 }
 
 int32_t CGxDeviceVk::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
-    (void)wm;
-    (void)param1;
-    (void)param2;
+    switch (wm) {
+        case GxWM_Size: {
+            const CRect* rect = reinterpret_cast<const CRect*>(param1);
+
+            if (param2 == Gx_SizeMinimized || param2 == Gx_SizeMaxHide) {
+                this->m_windowVisible = 0;
+
+                if (this->m_vkMade) {
+                    this->m_vk->window_size(this, 0, 0, 1);
+                }
+
+                break;
+            }
+
+            this->m_windowVisible = 1;
+            this->DeviceSetDefWindow(*rect);
+
+            if (this->m_vkMade && this->m_context) {
+                // Not a reset as on D3D9: the swapchain and the scene follow the window, the device
+                // and its resources stay. The engine's size-bound targets are made again as after one.
+                this->m_vk->window_size(this, static_cast<uint32_t>(rect->maxX), static_cast<uint32_t>(rect->maxY), 0);
+                this->ITexForceRecreation(0);
+                this->ISetWindowFocus(1);
+                this->NotifyOnDeviceRestored();
+            }
+
+            this->m_viewportDirty = 1;
+            break;
+        }
+
+        case GxWM_DisplayChange:
+            if (this->m_windowVisible) {
+                this->DeviceSetDefWindow(*reinterpret_cast<const CRect*>(param1));
+                this->m_viewportDirty = 1;
+            }
+
+            break;
+
+        case GxWM_Destroy:
+        case GxWM_KillFocus:
+            this->m_windowFocus = 0;
+            break;
+
+        case GxWM_SetFocus:
+            this->ISetWindowFocus(1);
+
+            if (this->m_vkMade) {
+                this->m_vk->cursor_changed(this);
+            }
+
+            break;
+
+        default:
+            break;
+    }
+
     return 0;
 }
 
+void CGxDeviceVk::DeviceOverride(EGxOverride override, uint32_t value) {
+    CGxDevice::DeviceOverride(override, value);
+
+    if (override == GxOverride_PixelShader) {
+        this->m_caps.m_shaderTargets[GxSh_Pixel] = value;
+    } else if (override == GxOverride_Unk7) {
+        this->m_caps.m_texNonPow2 = value != 0;
+    }
+}
+
 void CGxDeviceVk::CapsWindowSize(CRect& rect) {
-    rect = this->m_curWindowRect;
+    rect = this->DeviceCurWindow();
 }
 
 void CGxDeviceVk::CapsWindowSizeInScreenCoords(CRect& rect) {
-    rect = this->m_curWindowRect;
+    if (this->IDevIsWindowed() && this->m_hwnd) {
+        const CRect& window = this->DeviceCurWindow();
+        POINT points[2];
+        points[0].x = 0;
+        points[0].y = 0;
+        points[1].x = static_cast<LONG>(window.maxX);
+        points[1].y = static_cast<LONG>(window.maxY);
+        MapWindowPoints(this->m_hwnd, nullptr, points, 2);
+        rect.minY = static_cast<float>(points[0].y);
+        rect.minX = static_cast<float>(points[0].x);
+        rect.maxY = static_cast<float>(points[1].y);
+        rect.maxX = static_cast<float>(points[1].x);
+    } else {
+        rect = this->DeviceCurWindow();
+    }
+}
+
+void CGxDeviceVk::LogCrashInfo(char* buffer, uint32_t size) {
+    if (this->m_vk && buffer && size) {
+        this->m_vk->describe(this, buffer, size);
+    }
+}
+
+void CGxDeviceVk::SimulateLoss() {
+    if (this->m_vkMade) {
+        this->m_vk->simulate_loss(this);
+    }
+}
+
+// --- The frame --------------------------------------------------------------------------------------
+
+// As the D3D9 device's scene begin: a lost device is made again here, the engine told as after a
+// reset, then the next frame opens.
+void CGxDeviceVk::ISceneBegin() {
+    if (!this->m_vkMade || this->m_gaveUp) {
+        return;
+    }
+
+    if (!this->m_context) {
+        char why[512] = {};
+
+        if (this->m_vk->device_restore(this, why, sizeof(why)) != WXL_OK) {
+            GxLog("CGxDeviceVk::ISceneBegin(): %s", why);
+            this->m_gaveUp = true;
+
+            char message[768];
+            SStrPrintf(message, sizeof(message), "The Vulkan graphics device stopped working (%s).\n\nWorld of Warcraft will close. To play on Direct3D 9, set \"api = d3d9\" under [gx] in WarcraftXL.ini.", why);
+            OsGuiMessageBox(this->m_hwnd, OSGUI_MESSAGE_STYLE_OK, message, CLIENT_NAME);
+            EventPostClose();
+            return;
+        }
+
+        this->ITexForceRecreation(1);
+        this->m_vk->device_caps(this);
+        this->m_vk->gamma_changed(this);
+        this->m_vk->cursor_changed(this);
+        this->ISetWindowFocus(1);
+        this->m_context = 1;
+        this->m_intF5C = 0;
+        this->NotifyOnDeviceRestored();
+    }
+
+    this->ShaderConstantsClear();
+
+    if (this->m_vk->scene_begin(this) != WXL_GX_VK_FRAME_OK) {
+        this->m_context = 0;
+    }
+}
+
+void CGxDeviceVk::ScenePresent() {
+    if (this->m_context && this->m_vkMade) {
+        int32_t scrShotClick = this->m_scrShotClick;
+
+        CGxDevice::ScenePresent();
+
+        if (scrShotClick) {
+            this->DeviceScreenShot();
+        }
+
+        this->WaitForFPSCap();
+
+        if (this->m_vk->scene_present(this) != WXL_GX_VK_FRAME_OK) {
+            this->m_context = 0;
+        }
+    }
+
+    this->ISceneBegin();
+}
+
+void CGxDeviceVk::SceneClear(uint32_t mask, CImVector color) {
+    if (!this->m_context || !this->m_vkMade) {
+        return;
+    }
+
+    // A target texture's clears come with the step that draws into targets.
+    if (this->m_textureTarget[GxBuffers_Color].m_texture || this->m_textureTarget[GxBuffers_Depth].m_texture) {
+        return;
+    }
+
+    // D3D9 clears the viewport: the same rectangle its IXformSetViewport makes.
+    const CRect& window = this->DeviceCurWindow();
+    int32_t x = static_cast<int32_t>(this->m_viewport.m_x.m_l * window.maxX + 0.5f);
+    int32_t y = static_cast<int32_t>((1.0f - this->m_viewport.m_y.m_h) * window.maxY + 0.5f);
+    int32_t width = static_cast<int32_t>(this->m_viewport.m_x.m_h * window.maxX - x + 0.5f);
+    int32_t height = static_cast<int32_t>((1.0f - this->m_viewport.m_y.m_l) * window.maxY - y + 0.5f);
+
+    uint32_t argb = (static_cast<uint32_t>(color.a) << 24) | (static_cast<uint32_t>(color.r) << 16) | (static_cast<uint32_t>(color.g) << 8) | color.b;
+    this->m_vk->scene_clear(this, mask, argb, x, y, width, height);
+}
+
+void CGxDeviceVk::Draw(CGxBatch* batch, int32_t count) {
+    if (!this->m_context || this->m_intF5C || !this->m_vkMade) {
+        return;
+    }
+
+    this->m_vk->draw(this, batch, count);
+}
+
+// As the D3D9 device: the base class only keeps the projection; the native one is D3D's, z in [0, 1].
+void CGxDeviceVk::XformSetProjection(const C44Matrix& matrix) {
+    CGxDevice::XformSetProjection(matrix);
+
+    C44Matrix projNative = matrix;
+
+    if (!(fabs(projNative.c3 - 1.0f) < 0.00000023841858f) && !(fabs(projNative.c3) < 0.00000023841858f)) {
+        projNative *= 1.0f / projNative.c3;
+    }
+
+    if (projNative.d3 == 0.0f) {
+        float minZ = -(projNative.d2 / (projNative.c2 + 1.0f));
+        float maxZ = -(projNative.d2 / (projNative.c2 - 1.0f));
+        projNative.c2 = maxZ / (maxZ - minZ);
+        projNative.d2 = maxZ * minZ / (minZ - maxZ);
+    } else {
+        float invC2 = 1.0f / projNative.c2;
+        float minZ = (-1.0f - projNative.d2) * invC2;
+        float maxZ = (1.0f - projNative.d2) * invC2;
+        projNative.c2 = 1.0f / (maxZ - minZ);
+        projNative.d2 = minZ / (minZ - maxZ);
+    }
+
+    if (!(this->m_appMasterEnables & (1 << GxMasterEnable_NormalProjection)) && projNative.d3 != 1.0f) {
+        C44Matrix scale;
+        scale.a0 = 0.2f;
+        scale.b1 = 0.2f;
+        scale.c2 = 0.2f;
+        projNative = projNative * scale;
+    }
+
+    this->m_xforms[GxXform_Projection].m_dirty = 1;
+    this->m_projNative = projNative;
+}
+
+void CGxDeviceVk::IRsSendToHw(EGxRenderState which) {
+    // The render states reach the device with the step that draws.
+    (void)which;
+}
+
+// --- Buffers: the stream pools' offsets as D3D9 keeps them, the memory the runtime's ------------
+
+char* CGxDeviceVk::IBufLock(CGxBuf* buf) {
+    CGxPool* pool = buf->m_pool;
+
+    if (!this->m_context || !this->m_vkMade) {
+        return static_cast<char*>(this->m_emergencyMem[pool->m_target].Lock(buf->m_size));
+    }
+
+    if (pool->m_usage == GxPoolUsage_Stream) {
+        uint32_t index = (buf->m_itemSize + pool->m_offset - 1) - (buf->m_itemSize + pool->m_offset - 1) % buf->m_itemSize;
+
+        if (index + buf->m_size > static_cast<uint32_t>(pool->m_size)) {
+            pool->Discard();
+            buf->m_index = 0;
+            pool->m_offset = buf->m_size;
+        } else {
+            buf->m_index = index;
+            pool->m_offset = index + buf->m_size;
+        }
+    }
+
+    char* base = this->m_vk->pool_memory(this, pool);
+
+    if (!base || buf->m_index + buf->m_size > static_cast<uint32_t>(pool->m_size)) {
+        return static_cast<char*>(this->m_emergencyMem[pool->m_target].Lock(buf->m_size));
+    }
+
+    return base + buf->m_index;
+}
+
+void CGxDeviceVk::IBufUnlock(CGxBuf* buf) {
+    EmergencyMem& emergencyMem = this->m_emergencyMem[buf->m_pool->m_target];
+
+    if (emergencyMem.m_lock) {
+        emergencyMem.Unlock();
+        buf->m_valid = 0;
+        this->m_intF5C = 1;
+        return;
+    }
+
+    buf->m_valid = 1;
+}
+
+char* CGxDeviceVk::BufLock(CGxBuf* buf) {
+    CGxDevice::BufLock(buf);
+
+    return this->IBufLock(buf);
+}
+
+int32_t CGxDeviceVk::BufUnlock(CGxBuf* buf, uint32_t size) {
+    CGxDevice::BufUnlock(buf, size);
+    this->IBufUnlock(buf);
+
+    return 1;
+}
+
+void CGxDeviceVk::BufData(CGxBuf* buf, const void* data, uint32_t size, uint32_t offset) {
+    CGxDevice::BufData(buf, data, size, offset);
+
+    char* dst = this->IBufLock(buf);
+    memcpy(dst + offset, data, size);
+    this->IBufUnlock(buf);
 }
 
 void CGxDeviceVk::PoolSizeSet(CGxPool* pool, uint32_t size) {
-    (void)pool;
-    (void)size;
+    pool->m_size = size;
+
+    if (this->m_vkMade) {
+        this->m_vk->pool_resize(this, pool);
+    }
+}
+
+void CGxDeviceVk::PoolDestroy(CGxPool* pool) {
+    if (pool) {
+        if (this->m_vkMade) {
+            this->m_vk->pool_destroy(this, pool);
+        }
+
+        CGxDevice::PoolDestroy(pool);
+    }
+}
+
+// --- Textures: the engine's callbacks as D3D9 runs them; the runtime keeps a record ---------------
+
+void CGxDeviceVk::ITexCreate(CGxTex* texId) {
+    if (!this->m_vkMade || !this->m_vk->tex_create(this, texId)) {
+        return;
+    }
+
+    texId->m_needsCreation = 0;
+}
+
+void CGxDeviceVk::ITexUpload(CGxTex* texId) {
+    uint32_t texelStrideInBytes;
+    const void* texels = nullptr;
+    texId->m_userFunc(GxTex_Lock, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
+
+    uint32_t width;
+    uint32_t height;
+    uint32_t baseMip;
+    uint32_t mipCount;
+    this->ITexWHDStartEnd(texId, width, height, baseMip, mipCount);
+
+    uint32_t faceCount = texId->m_target == GxTex_CubeMap ? GxTexCubeFaces_Last : 1;
+
+    // Every level is latched as on D3D9, so the texture's owner sees the same calls; the texels
+    // are not copied yet.
+    for (uint32_t face = 0; face < faceCount; face++) {
+        uint32_t mipWidth = width;
+        uint32_t mipHeight = height;
+
+        for (uint32_t mip = baseMip; mip != mipCount; mip++) {
+            texels = nullptr;
+            texId->m_userFunc(GxTex_Latch, mipWidth, mipHeight, face, mip, texId->m_userArg, texelStrideInBytes, texels);
+
+            mipWidth = mipWidth > 1 ? mipWidth >> 1 : 1;
+            mipHeight = mipHeight > 1 ? mipHeight >> 1 : 1;
+        }
+    }
+
+    texels = nullptr;
+    texId->m_userFunc(GxTex_Unlock, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
+}
+
+void CGxDeviceVk::ITexMarkAsUpdated(CGxTex* texId) {
+    if (!texId->m_needsUpdate || !this->m_context) {
+        return;
+    }
+
+    if (texId->m_needsCreation || !texId->m_apiSpecificData) {
+        this->ITexCreate(texId);
+    }
+
+    if (!texId->m_needsCreation && texId->m_apiSpecificData) {
+        if (texId->m_userFunc) {
+            this->ITexUpload(texId);
+        }
+
+        CGxDevice::ITexMarkAsUpdated(texId);
+    }
+}
+
+void CGxDeviceVk::ITexForceRecreation(int32_t all) {
+    if (!this->m_vkMade) {
+        return;
+    }
+
+    for (CGxTex* texId = this->m_textures.Head(); texId; texId = this->m_textures.Next(texId)) {
+        if (!texId->m_apiSpecificData || !(all || texId->m_flags.m_renderTarget)) {
+            continue;
+        }
+
+        static CiRect s_updateRect;
+
+        this->m_vk->tex_destroy(this, texId);
+        texId->m_needsCreation = 1;
+        this->TexMarkForUpdate(texId, s_updateRect, 0);
+
+        if (texId->m_userFunc) {
+            uint32_t texelStrideInBytes;
+            const void* texels;
+            texId->m_userFunc(GxTex_Recreate, texId->m_width, texId->m_height, 0, 0, texId->m_userArg, texelStrideInBytes, texels);
+        }
+    }
+
+    this->NotifyOnTextureRecreation();
+}
+
+void CGxDeviceVk::TexDestroy(CGxTex* texId) {
+    if (this->m_vkMade && texId->m_apiSpecificData) {
+        this->m_vk->tex_destroy(this, texId);
+    }
+
+    CGxDevice::TexDestroy(texId);
 }
 
 int32_t CGxDeviceVk::TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane) {
@@ -126,6 +1034,43 @@ int32_t CGxDeviceVk::TexStretch(CGxTex* dest, const CiRect* destRect, const CiRe
     (void)face;
     return 0;
 }
+
+// --- The pointer: hardware through Windows' cursor, software drawn by the present pass ------------
+
+void CGxDeviceVk::ICursorCreate(const CGxFormat& format) {
+    CGxDevice::ICursorCreate(format);
+
+    if (this->m_vkMade) {
+        this->m_vk->cursor_changed(this);
+    }
+}
+
+void CGxDeviceVk::ICursorDestroy() {
+    CGxDevice::ICursorDestroy();
+}
+
+void CGxDeviceVk::ICursorDraw() {
+    // Neither cursor is drawn by the engine here: the hardware one is Windows', the software one
+    // is drawn over the frame by the runtime's present pass.
+}
+
+void CGxDeviceVk::CursorSetVisible(int32_t visible) {
+    CGxDevice::CursorSetVisible(visible);
+
+    if (this->m_vkMade && this->m_context) {
+        this->m_vk->cursor_changed(this);
+    }
+}
+
+void CGxDeviceVk::CursorUnlock(uint32_t x, uint32_t y) {
+    CGxDevice::CursorUnlock(x, y);
+
+    if (this->m_vkMade) {
+        this->m_vk->cursor_changed(this);
+    }
+}
+
+// --- What comes with later steps -------------------------------------------------------------------
 
 bool CGxDeviceVk::QueryBegin(CGxQuery* query) {
     (void)query;
@@ -157,6 +1102,8 @@ void CGxDeviceVk::IShaderReload(CGxShader* shader, const char* path, const char*
 }
 
 void CGxDeviceVk::IShaderCreate(CGxShader* shader) {
+    // The client's shaders are translated with the step that draws the world: until then each
+    // stays invalid, as one D3D9 refuses, and the engine draws without it.
     (void)shader;
 }
 

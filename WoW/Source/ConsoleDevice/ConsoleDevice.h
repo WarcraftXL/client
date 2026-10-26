@@ -30,6 +30,10 @@ extern char s_windowTitle[256];
 
 void AddConsoleDeviceDefaultCallback(void (*callback)(OPTION_PAGE page));
 int32_t CCGxRestart(const char* command, const char* arguments);
+#if defined(WOWDECOMP_ARCH_64)
+int32_t CCGxVkSimulateLoss(const char* command, const char* arguments);
+int32_t CCGxCapture(const char* command, const char* arguments);
+#endif
 int32_t ConsoleDeviceExists();
 void ConsoleDeviceDefaults(OPTION_PAGE page);
 void ConsoleDeviceDestroy();

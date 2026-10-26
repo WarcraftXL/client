@@ -329,6 +329,10 @@ void ConsoleDeviceInitialize(const char* title, bool unused_a2, bool unused_a3) 
     ConsoleDetectSetDefaultsFormat(s_defaults, s_hardware);
     RegisterGxCVars();
     ConsoleCommandRegister("gxRestart", CCGxRestart, CATEGORY_GRAPHICS, nullptr);
+#if defined(WOWDECOMP_ARCH_64)
+    ConsoleCommandRegister("gxVkSimulateLoss", CCGxVkSimulateLoss, CATEGORY_GRAPHICS, "Marks the Vulkan device lost, to test its return");
+    ConsoleCommandRegister("gxCapture", CCGxCapture, CATEGORY_GRAPHICS, "Records the next frame of the D3D9 device to WarcraftXL\\captures");
+#endif
 
     GxAdapterMonitorModes(s_gxMonitorModes);
     ValidateFormatMonitor(s_fallbackFormat);
@@ -429,8 +433,8 @@ void ConsoleDeviceInitialize(const char* title, bool unused_a2, bool unused_a3) 
     ValidateFormatMonitor(format);
 
     for (s_device = CreateGxDevice(api, OsWindowProc, format); !s_device; s_device = CreateGxDevice(api, OsWindowProc, format)) {
-        // A machine without the Vulkan floor, or a runtime that does not draw through Vulkan yet,
-        // keeps D3D9, with the same format: the format is not what Vulkan refused.
+        // A machine without the Vulkan floor, or a window Vulkan cannot present to, keeps D3D9,
+        // with the same format: the format is not what Vulkan refused.
         if (api == GxApi_Vulkan) {
             GxLog("ConsoleDeviceInitialize(): no Vulkan device, falling back to D3D9");
             api = GxApi_D3d9;
