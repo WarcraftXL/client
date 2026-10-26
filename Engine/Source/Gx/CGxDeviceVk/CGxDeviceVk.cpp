@@ -6,6 +6,7 @@
 #include <cstring>
 #include <new>
 #include "Engine/Source/Event/Event.h"
+#include "Engine/Source/Gx/Blit.h"
 #include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/CGxTex.h"
@@ -14,7 +15,20 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "GameVersion.h"
 #include "WarcraftXL/GxVulkan.h"
+#include "wxl/core/gx_state.h"
 #include "wxl/engine/gx.hpp"
+
+// The runtime reads these records of the engine through its own declarations (wxl/core/gx_state.h).
+static_assert(sizeof(CGxAppRenderState) == sizeof(wxl_gx_app_state) && offsetof(CGxAppRenderState, m_value) == offsetof(wxl_gx_app_state, value) &&
+                  offsetof(CGxAppRenderState, m_dirty) == offsetof(wxl_gx_app_state, dirty) && sizeof(CGxStateBom) == sizeof(wxl_gx_state_value),
+              "CGxAppRenderState as the runtime reads it");
+static_assert(sizeof(CGxVertexAttrib) == sizeof(wxl_gx_vertex_attrib) && offsetof(CGxVertexAttrib, m_offset) == offsetof(wxl_gx_vertex_attrib, offset),
+              "CGxVertexAttrib as the runtime reads it");
+static_assert(sizeof(CBoundingBox) == sizeof(wxl_gx_viewport) && offsetof(CBoundingBox, m_z) == offsetof(wxl_gx_viewport, z_low),
+              "the viewport (CBoundingBox) as the runtime reads it");
+static_assert(sizeof(CGxBatch) == sizeof(wxl_gx_batch) && offsetof(CGxBatch, m_count) == offsetof(wxl_gx_batch, count) &&
+                  offsetof(CGxBatch, m_maxIndex) == offsetof(wxl_gx_batch, max_index),
+              "CGxBatch as the runtime reads it");
 
 CGxDevice* CreateCGxDeviceVk() {
     void* mem = SMemAlloc(sizeof(CGxDeviceVk), __FILE__, __LINE__, 0);
@@ -494,8 +508,7 @@ int32_t CGxDeviceVk::DeviceSetFormat(const CGxFormat& format) {
                 this->m_vk->gamma_changed(this);
                 this->ICursorCreate(createFormat);
 
-                // As the D3D9 device: the interface's shaders, which this device does not take yet
-                // (they stay invalid, and the engine draws without them).
+                // As the D3D9 device: the interface's shaders, which the runtime has programs for.
                 g_theGxDevicePtr->ShaderCreate(CGxDevice::s_uiVertexShader, GxSh_Vertex, "Shaders\\Vertex", "UI", 2);
                 g_theGxDevicePtr->ShaderCreate(&CGxDevice::s_uiPixelShader, GxSh_Pixel, "Shaders\\Pixel", "UI", 1);
 
@@ -791,12 +804,37 @@ void CGxDeviceVk::SceneClear(uint32_t mask, CImVector color) {
     this->m_vk->scene_clear(this, mask, argb, x, y, width, height);
 }
 
+// As the D3D9 device's IShaderConstantsFlush: the registers the frame changed reach the device.
+void CGxDeviceVk::IShaderConstantsFlush() {
+    ShadowConstants& vs = CGxDevice::s_shadowConstants[1];
+
+    if (vs.dirtyMin <= vs.dirtyMax) {
+        this->m_vk->shader_constants(this, 0, vs.dirtyMin, vs.dirtyMax - vs.dirtyMin + 1, &vs.constants[vs.dirtyMin * 4]);
+    }
+
+    vs.dirtyMin = 255;
+    vs.dirtyMax = 0;
+
+    ShadowConstants& ps = CGxDevice::s_shadowConstants[0];
+
+    if (ps.dirtyMin <= ps.dirtyMax) {
+        this->m_vk->shader_constants(this, 1, ps.dirtyMin, ps.dirtyMax - ps.dirtyMin + 1, &ps.constants[ps.dirtyMin * 4]);
+    }
+
+    ps.dirtyMax = 0;
+    ps.dirtyMin = 255;
+}
+
+// As the D3D9 device's Draw: the constants and the render states reach the device first (its
+// IStateSync), then the runtime reads the rest of the draw out of the device's state.
 void CGxDeviceVk::Draw(CGxBatch* batch, int32_t count) {
     if (!this->m_context || this->m_intF5C || !this->m_vkMade) {
         return;
     }
 
-    this->m_vk->draw(this, batch, count);
+    this->IShaderConstantsFlush();
+    this->IRsSync(0);
+    this->m_vk->draw(this, reinterpret_cast<const wxl_gx_batch*>(batch), count);
 }
 
 // As the D3D9 device: the base class only keeps the projection; the native one is D3D's, z in [0, 1].
@@ -834,9 +872,60 @@ void CGxDeviceVk::XformSetProjection(const C44Matrix& matrix) {
     this->m_projNative = projNative;
 }
 
+// The runtime reads the render states themselves at each draw; what a state's change sets in
+// motion on the D3D9 device is done here as it does it: a texture made and filled at its first
+// use (ISetTexture), a shader made at its first bind (IBindVertexShader, IBindPixelShader), the
+// texture generation's matrix (ISetTexGen).
 void CGxDeviceVk::IRsSendToHw(EGxRenderState which) {
-    // The render states reach the device with the step that draws.
-    (void)which;
+    CGxStateBom& value = this->m_appRenderStates[which].m_value;
+
+    if (which >= GxRs_Texture0 && which <= GxRs_Texture15) {
+        if (value.m_data.p) {
+            this->ITexMarkAsUpdated(static_cast<CGxTex*>(value.m_data.p));
+        }
+    } else if (which == GxRs_VertexShader || which == GxRs_PixelShader) {
+        CGxShader* shader = static_cast<CGxShader*>(value.m_data.p);
+
+        if (shader && !shader->m_loaded) {
+            this->IShaderCreate(shader);
+        }
+    } else if (which >= GxRs_TexGen0 && which <= GxRs_TexGen7) {
+        this->ISetTexGen(which - GxRs_TexGen0, value.m_data.i[0]);
+    }
+}
+
+// As the D3D9 device's ISetTexGen: the matrix that turns the texture generation's input into
+// the stage's coordinate.
+void CGxDeviceVk::ISetTexGen(uint32_t tmu, int32_t texGen) {
+    if (tmu >= static_cast<uint32_t>(this->m_caps.m_numTmus)) {
+        return;
+    }
+
+    C44Matrix matrix;
+
+    if (texGen == GxTexGen_ObjectLinear || texGen == GxTexGen_World) {
+        CGxMatrixStack& view = this->m_xforms[GxXform_View];
+        matrix = view.m_mtx[view.m_level];
+        matrix = matrix.AffineInverse();
+
+        if (texGen == GxTexGen_ObjectLinear) {
+            CGxMatrixStack& world = this->m_xforms[GxXform_World];
+            matrix = matrix * world.m_mtx[world.m_level].Inverse();
+        }
+    } else if (texGen == GxTexGen_SphereMap) {
+        matrix.a0 = 0.5f;
+        matrix.b1 = 0.5f;
+        matrix.d0 = 0.5f;
+        matrix.d1 = 0.5f;
+    } else {
+        this->m_texGen[tmu].Identity();
+        return;
+    }
+
+    CGxMatrixStack& stack = this->m_texGen[tmu];
+    stack.m_dirty = 1;
+    stack.m_flags[stack.m_level] &= ~CGxMatrixStack::F_Identity;
+    stack.m_mtx[stack.m_level] = matrix;
 }
 
 // --- Buffers: the stream pools' offsets as D3D9 keeps them, the memory the runtime's ------------
@@ -852,6 +941,8 @@ char* CGxDeviceVk::IBufLock(CGxBuf* buf) {
         uint32_t index = (buf->m_itemSize + pool->m_offset - 1) - (buf->m_itemSize + pool->m_offset - 1) % buf->m_itemSize;
 
         if (index + buf->m_size > static_cast<uint32_t>(pool->m_size)) {
+            // D3D9's DISCARD: the runtime renames the pool's memory, what the frame drew from it stays.
+            this->m_vk->pool_discard(this, pool);
             pool->Discard();
             buf->m_index = 0;
             pool->m_offset = buf->m_size;
@@ -878,6 +969,10 @@ void CGxDeviceVk::IBufUnlock(CGxBuf* buf) {
         buf->m_valid = 0;
         this->m_intF5C = 1;
         return;
+    }
+
+    if (this->m_vkMade && buf->m_size) {
+        this->m_vk->pool_written(this, buf->m_pool, buf->m_index, buf->m_size);
     }
 
     buf->m_valid = 1;
@@ -925,7 +1020,13 @@ void CGxDeviceVk::PoolDestroy(CGxPool* pool) {
 // --- Textures: the engine's callbacks as D3D9 runs them; the runtime keeps a record ---------------
 
 void CGxDeviceVk::ITexCreate(CGxTex* texId) {
-    if (!this->m_vkMade || !this->m_vk->tex_create(this, texId)) {
+    uint32_t width;
+    uint32_t height;
+    uint32_t baseMip;
+    uint32_t mipCount;
+    this->ITexWHDStartEnd(texId, width, height, baseMip, mipCount);
+
+    if (!this->m_vkMade || !this->m_vk->tex_create(this, texId, width, height, mipCount - baseMip)) {
         return;
     }
 
@@ -943,20 +1044,76 @@ void CGxDeviceVk::ITexUpload(CGxTex* texId) {
     uint32_t mipCount;
     this->ITexWHDStartEnd(texId, width, height, baseMip, mipCount);
 
+    int32_t compressed = texId->m_dataFormat >= GxTex_Dxt1 && texId->m_dataFormat <= GxTex_Dxt5;
     uint32_t faceCount = texId->m_target == GxTex_CubeMap ? GxTexCubeFaces_Last : 1;
 
-    // Every level is latched as on D3D9, so the texture's owner sees the same calls; the texels
-    // are not copied yet.
+    // As the D3D9 device: every level latched, the updated rectangle of each copied by the
+    // engine's own Blit into the format of the texture, here into what the runtime hands over.
     for (uint32_t face = 0; face < faceCount; face++) {
         uint32_t mipWidth = width;
         uint32_t mipHeight = height;
+        uint32_t level = 0;
 
-        for (uint32_t mip = baseMip; mip != mipCount; mip++) {
+        for (uint32_t mip = baseMip; mip != mipCount; mip++, level++) {
             texels = nullptr;
             texId->m_userFunc(GxTex_Latch, mipWidth, mipHeight, face, mip, texId->m_userArg, texelStrideInBytes, texels);
 
-            mipWidth = mipWidth > 1 ? mipWidth >> 1 : 1;
-            mipHeight = mipHeight > 1 ? mipHeight >> 1 : 1;
+            if (texels && !texId->m_flags.m_renderTarget) {
+                RECT rect;
+                rect.left = texId->m_updateRect.minX >> mip;
+                rect.top = texId->m_updateRect.minY >> mip;
+                rect.bottom = rect.top + 1 > texId->m_updateRect.maxY >> mip ? rect.top + 1 : texId->m_updateRect.maxY >> mip;
+                rect.right = rect.left + 1 > texId->m_updateRect.maxX >> mip ? rect.left + 1 : texId->m_updateRect.maxX >> mip;
+
+                if (static_cast<uint32_t>(texId->m_format - GxTex_Dxt1) <= 2) {
+                    rect.left &= ~3;
+                    rect.top &= ~3;
+                    rect.right = (rect.right + 3) & ~3;
+                    rect.bottom = (rect.bottom + 3) & ~3;
+
+                    if (rect.bottom > static_cast<int32_t>(mipHeight)) {
+                        rect.bottom = mipHeight;
+                    }
+
+                    if (rect.right > static_cast<int32_t>(mipWidth)) {
+                        rect.right = mipWidth;
+                    }
+                }
+
+                uint32_t pitch = 0;
+                char* dst = this->m_vk->tex_lock(this, texId, face, level, rect.left, rect.top, rect.right - rect.left, rect.bottom - rect.top, &pitch);
+
+                if (dst) {
+                    const uint8_t* src = static_cast<const uint8_t*>(texels);
+
+                    if (!texId->m_flags.m_bit15) {
+                        EGxTexFormat dataFormat = texId->m_dataFormat;
+
+                        if (compressed) {
+                            src += s_texFormatBytesPerBlock[dataFormat] * (rect.left >> 2) + texelStrideInBytes * (rect.top >> 2);
+                        } else {
+                            src += ((rect.left * s_texFormatBitDepth[dataFormat]) >> 3) + texelStrideInBytes * rect.top;
+                        }
+                    }
+
+                    C2iVector size;
+                    size.x = rect.right - rect.left;
+                    size.y = rect.bottom - rect.top;
+                    Blit(size, BlitAlpha_0, src, texelStrideInBytes, GxGetBlitFormat(texId->m_dataFormat), dst, pitch, GxGetBlitFormat(texId->m_format));
+                    this->m_vk->tex_unlock(this, texId);
+                }
+            }
+
+            mipHeight >>= 1;
+            mipWidth >>= 1;
+
+            if (!mipWidth) {
+                mipWidth = 1;
+            }
+
+            if (!mipHeight) {
+                mipHeight = 1;
+            }
         }
     }
 
@@ -1101,10 +1258,43 @@ void CGxDeviceVk::IShaderReload(CGxShader* shader, const char* path, const char*
     (void)name;
 }
 
+// As the D3D9 device's IShaderCreateVertex/Pixel: made when the context is up, by the record's
+// name. The runtime has programs for the interface's ("UI", "Desaturate"); the others are
+// translated with the step that draws the world: until then each stays invalid, as one D3D9
+// refuses, and the runtime leaves out the draws that bind it.
 void CGxDeviceVk::IShaderCreate(CGxShader* shader) {
-    // The client's shaders are translated with the step that draws the world: until then each
-    // stays invalid, as one D3D9 refuses, and the engine draws without it.
-    (void)shader;
+    shader->m_valid = 0;
+
+    if (!this->m_context || !this->m_vkMade || (shader->m_target != GxSh_Vertex && shader->m_target != GxSh_Pixel)) {
+        return;
+    }
+
+    shader->m_loaded = 1;
+
+    if (this->m_vk->shader_create(this, shader, shader->m_target == GxSh_Vertex, shader->m_key.m_str ? shader->m_key.m_str : "")) {
+        shader->m_valid = 1;
+    }
+}
+
+void CGxDeviceVk::ShaderCreate(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations) {
+    CGxDevice::ShaderCreate(shaders, target, path, name, permutations);
+
+    if (permutations == 1 && !shaders[0]->m_loaded) {
+        this->IShaderCreate(shaders[0]);
+    }
+}
+
+void CGxDeviceVk::ShaderDestroy(CGxShader*& shader) {
+    if (shader->m_refCount == 1) {
+        if (this->m_vkMade) {
+            this->m_vk->shader_destroy(this, shader);
+        }
+
+        shader->m_loaded = 0;
+        shader->m_valid = 0;
+    }
+
+    CGxDevice::ShaderDestroy(shader);
 }
 
 void CGxDeviceVk::StereoSetConvergence(float convergence) {

@@ -7,9 +7,10 @@
 // Vulkan work to the runtime's table, one call each. The layout of CGxDevice is the stock one; what
 // this class adds follows it.
 //
-// The runtime draws the frame's clear, Dear ImGui and the pointer; the engine's draws are accepted
-// and not drawn yet. Fullscreen is a borderless window over the monitor, minimised when it loses
-// the focus; the scene is the window's size.
+// The runtime draws the frame's clear, the engine's interface (its textures, pools and interface
+// programs on the device), Dear ImGui and the pointer; the world's draws are counted and left out
+// until the steps that draw it. Fullscreen is a borderless window over the monitor, minimised when
+// it loses the focus; the scene is the window's size.
 
 #include <cstddef>
 #include <cstdint>
@@ -67,6 +68,8 @@ class CGxDeviceVk : public CGxDevice {
     bool QueryEnd(CGxQuery* query) override;
     bool QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t& data) override;
     bool QueryGetData(CGxQuery* query, uint32_t& data) override;
+    void ShaderCreate(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations) override;
+    void ShaderDestroy(CGxShader*& shader) override;
     void IShaderReload(CGxShader* shader, const char* path, const char* name) override;
     void IShaderCreate(CGxShader* shader) override;
     void CursorSetVisible(int32_t visible) override;
@@ -95,6 +98,8 @@ class CGxDeviceVk : public CGxDevice {
     void ITexForceRecreation(int32_t all);
     char* IBufLock(CGxBuf* buf);
     void IBufUnlock(CGxBuf* buf);
+    void IShaderConstantsFlush();
+    void ISetTexGen(uint32_t tmu, int32_t texGen);
 };
 
 CGxDevice* CreateCGxDeviceVk();
