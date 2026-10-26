@@ -648,6 +648,11 @@ namespace WarcraftXL::Binding {
         std::memset(device->m_deviceStates, 0xA5, sizeof device->m_deviceStates);
         device->m_d3dCurrentVertexDecl = nullptr;
         std::memset(device->m_d3dVertexStreamBuf, 0, sizeof device->m_d3dVertexStreamBuf);
+        // The index buffer is bound again only when the engine marks its own as changed
+        // (IStateSync tests m_primIndexDirty first): both, or a draw that keeps the engine's
+        // buffer would draw with the one set behind its back.
+        device->m_d3dCurrentIndexBuf = nullptr;
+        device->m_primIndexDirty     = 1;
         device->m_viewportDirty = 1;
         device->m_scissorRectDirty = 1;
     }
