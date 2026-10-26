@@ -118,9 +118,12 @@ Win32; the seam calls compile to nothing there.
 
 D3D9 is the default device. `SET gxApi "Vulkan"` in `WTF/Config.wtf`, `-vulkan` on the command line
 or `[gx] api = vulkan` in `WarcraftXL.ini` (which also takes a D3D9Ex request) choose the Vulkan
-device, `Engine/Source/Gx/CGxDeviceVk`, an adapter over the runtime's renderer: it makes the Vulkan
-device and logs it, then the client creates D3D9 in its place, since the renderer does not draw yet.
-A machine without Vulkan 1.3 stays on D3D9, and the log says why.
+device, `Engine/Source/Gx/CGxDeviceVk`, an adapter over the runtime's renderer. The window, its
+fullscreen (borderless), resizes and minimising, the frame's clear, Dear ImGui and the pointer go
+through Vulkan; the engine's own draws are not drawn yet, so the screen shows the clear colour, the
+mods' ImGui windows and the pointer. A machine without Vulkan 1.3 stays on D3D9, and the log says
+why. Two console commands serve the renderer's tests: `gxVkSimulateLoss` (the Vulkan device lost and
+made again) and `gxCapture` (the next frame of the D3D9 device recorded to `WarcraftXL\captures\`).
 
 The signature checks of the original are kept (`WOWDECOMP_DISABLE_SIGNATURE_CHECKS=OFF`): modified
 interface files need the option, or a mod such as core's `wxl.glue-unlock` on the stock client.
@@ -173,7 +176,8 @@ are two different columns.
 
 ```
 WarcraftXL/              the integration: CMake, Init.h/.cpp (WarcraftXLInit), Seams.h (adapters),
-                         GxVulkan.h (the runtime's Vulkan renderer, for ConsoleDevice and CGxDeviceVk)
+                         GxVulkan.h (the runtime's Vulkan renderer, for ConsoleDevice and CGxDeviceVk),
+                         GxCapture.h/.cpp (a frame of the D3D9 device recorded, gxCapture)
 WoW/                     the game: objects, world, interface, networking, database, glue screens
 Engine/                  the engine: storage, graphics, sound, scripting, frames
 Tools/                   WowClient (the executable with the crash logger), the Xvid decoder
