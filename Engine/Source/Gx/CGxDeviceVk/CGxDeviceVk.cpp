@@ -29,6 +29,10 @@ static_assert(sizeof(CBoundingBox) == sizeof(wxl_gx_viewport) && offsetof(CBound
 static_assert(sizeof(CGxBatch) == sizeof(wxl_gx_batch) && offsetof(CGxBatch, m_count) == offsetof(wxl_gx_batch, count) &&
                   offsetof(CGxBatch, m_maxIndex) == offsetof(wxl_gx_batch, max_index),
               "CGxBatch as the runtime reads it");
+static_assert(sizeof(CGxApiLight) == sizeof(wxl_gx_light) && offsetof(CGxApiLight, m_dirColor) == offsetof(wxl_gx_light, diffuse) &&
+                  offsetof(CGxApiLight, m_constantAttenuation) == offsetof(wxl_gx_light, attenuation) &&
+                  offsetof(CGxApiLight, m_enable) == offsetof(wxl_gx_light, enable),
+              "CGxApiLight as the runtime reads it");
 
 CGxDevice* CreateCGxDeviceVk() {
     void* mem = SMemAlloc(sizeof(CGxDeviceVk), __FILE__, __LINE__, 0);
@@ -747,8 +751,15 @@ void CGxDeviceVk::ISceneBegin() {
         }
 
         this->ITexForceRecreation(1);
+
+        // The queries were the lost device's: made again at their next begin.
+        for (CGxQuery* query = this->m_queryList.Head(); query; query = this->m_queryList.Next(query)) {
+            query->m_apiSpecific = nullptr;
+        }
+
         this->m_vk->device_caps(this);
         this->m_vk->gamma_changed(this);
+        this->m_vk->target_set(this);
         this->m_vk->cursor_changed(this);
         this->ISetWindowFocus(1);
         this->m_context = 1;
@@ -788,12 +799,8 @@ void CGxDeviceVk::SceneClear(uint32_t mask, CImVector color) {
         return;
     }
 
-    // A target texture's clears come with the step that draws into targets.
-    if (this->m_textureTarget[GxBuffers_Color].m_texture || this->m_textureTarget[GxBuffers_Depth].m_texture) {
-        return;
-    }
-
-    // D3D9 clears the viewport: the same rectangle its IXformSetViewport makes.
+    // D3D9 clears the viewport: the same rectangle its IXformSetViewport makes (the runtime works
+    // out a texture target's).
     const CRect& window = this->DeviceCurWindow();
     int32_t x = static_cast<int32_t>(this->m_viewport.m_x.m_l * window.maxX + 0.5f);
     int32_t y = static_cast<int32_t>((1.0f - this->m_viewport.m_y.m_h) * window.maxY + 0.5f);
@@ -1173,23 +1180,78 @@ void CGxDeviceVk::TexDestroy(CGxTex* texId) {
     CGxDevice::TexDestroy(texId);
 }
 
+// --- Render targets and copies from the back buffer: made as the D3D9 device makes them ----------
+
+void CGxDeviceVk::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint32_t plane) {
+    if (!this->m_context || !this->m_vkMade) {
+        return;
+    }
+
+    CGxDevice::TextureTarget& target = this->m_textureTarget[buffer];
+
+    if (target.m_texture == texture && target.m_plane == plane) {
+        return;
+    }
+
+    CGxDevice::DeviceSetRenderTarget(buffer, texture, plane);
+
+    if (texture && (texture->m_needsCreation || !texture->m_apiSpecificData)) {
+        this->ITexCreate(texture);
+    }
+
+    this->m_viewportDirty = 1;
+    this->m_scissorRectDirty = 1;
+    this->m_vk->target_set(this);
+}
+
 int32_t CGxDeviceVk::TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane) {
-    (void)dest;
-    (void)destPos;
-    (void)sourcePos;
-    (void)size;
-    (void)level;
-    (void)plane;
-    return 0;
+    if (!this->m_context || !this->m_vkMade) {
+        return 0;
+    }
+
+    if (dest->m_needsCreation || !dest->m_apiSpecificData) {
+        this->ITexCreate(dest);
+    }
+
+    if (dest->m_needsCreation || !dest->m_apiSpecificData) {
+        return 0;
+    }
+
+    return this->m_vk->tex_copy(this, dest, destPos.x, destPos.y, sourcePos.x, sourcePos.y, size.x, size.y, level, plane);
 }
 
 int32_t CGxDeviceVk::TexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face) {
-    (void)dest;
-    (void)destRect;
-    (void)sourceRect;
-    (void)level;
-    (void)face;
-    return 0;
+    if (!this->m_context || !this->m_vkMade) {
+        return 0;
+    }
+
+    if (dest->m_needsCreation || !dest->m_apiSpecificData) {
+        this->ITexCreate(dest);
+    }
+
+    if (dest->m_needsCreation || !dest->m_apiSpecificData) {
+        return 0;
+    }
+
+    // The rectangles as CiRect holds them: minY, minX, maxY, maxX.
+    int32_t destValues[4];
+    int32_t sourceValues[4];
+
+    if (destRect) {
+        destValues[0] = destRect->minY;
+        destValues[1] = destRect->minX;
+        destValues[2] = destRect->maxY;
+        destValues[3] = destRect->maxX;
+    }
+
+    if (sourceRect) {
+        sourceValues[0] = sourceRect->minY;
+        sourceValues[1] = sourceRect->minX;
+        sourceValues[2] = sourceRect->maxY;
+        sourceValues[3] = sourceRect->maxX;
+    }
+
+    return this->m_vk->tex_stretch(this, dest, destRect ? destValues : nullptr, sourceRect ? sourceValues : nullptr, level, face);
 }
 
 // --- The pointer: hardware through Windows' cursor, software drawn by the present pass ------------
@@ -1227,30 +1289,79 @@ void CGxDeviceVk::CursorUnlock(uint32_t x, uint32_t y) {
     }
 }
 
-// --- What comes with later steps -------------------------------------------------------------------
+// --- Occlusion queries: the runtime's handle in m_apiSpecific, made at the first use -------------
+
+static uint32_t QueryHandle(CGxQuery* query) {
+    return static_cast<uint32_t>(reinterpret_cast<uintptr_t>(query->m_apiSpecific));
+}
+
+void CGxDeviceVk::QueryDestroy(CGxQuery*& query) {
+    if (this->m_vkMade && query->m_apiSpecific) {
+        this->m_vk->query_destroy(this, QueryHandle(query));
+    }
+
+    query->m_apiSpecific = nullptr;
+    CGxDevice::QueryDestroy(query);
+}
 
 bool CGxDeviceVk::QueryBegin(CGxQuery* query) {
-    (void)query;
-    return false;
+    if (!this->m_context || !this->m_vkMade || query->m_type != GxQueryType_Occlusion) {
+        return false;
+    }
+
+    if (!query->m_apiSpecific) {
+        query->m_apiSpecific = reinterpret_cast<void*>(static_cast<uintptr_t>(this->m_vk->query_create(this)));
+
+        if (!query->m_apiSpecific) {
+            return false;
+        }
+    }
+
+    return this->m_vk->query_begin(this, QueryHandle(query)) != 0;
 }
 
 bool CGxDeviceVk::QueryEnd(CGxQuery* query) {
-    (void)query;
-    return false;
+    if (!this->m_context || !this->m_vkMade || !query->m_apiSpecific) {
+        return false;
+    }
+
+    return this->m_vk->query_end(this, QueryHandle(query)) != 0;
 }
 
+// As the D3D9 device: Unk0 the result's size, Unk1 whether the result is there (answered in data,
+// the call itself answering false).
 bool CGxDeviceVk::QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t& data) {
-    (void)query;
-    (void)param;
-    data = 0;
-    return false;
+    if (!this->m_context || !this->m_vkMade) {
+        return false;
+    }
+
+    switch (param) {
+        case GxQueryParam_Unk0:
+            data = sizeof(uint32_t);
+            return true;
+
+        case GxQueryParam_Unk1: {
+            uint32_t samples = 0;
+            data = !query->m_apiSpecific || this->m_vk->query_result(this, QueryHandle(query), &samples);
+            return false;
+        }
+
+        default:
+            return false;
+    }
 }
 
 bool CGxDeviceVk::QueryGetData(CGxQuery* query, uint32_t& data) {
-    (void)query;
     data = 0;
-    return false;
+
+    if (!this->m_context || !this->m_vkMade || !query->m_apiSpecific) {
+        return false;
+    }
+
+    return this->m_vk->query_result(this, QueryHandle(query), &data) != 0;
 }
+
+// --- What comes with later steps -------------------------------------------------------------------
 
 void CGxDeviceVk::IShaderReload(CGxShader* shader, const char* path, const char* name) {
     (void)shader;
@@ -1258,10 +1369,9 @@ void CGxDeviceVk::IShaderReload(CGxShader* shader, const char* path, const char*
     (void)name;
 }
 
-// As the D3D9 device's IShaderCreateVertex/Pixel: made when the context is up, by the record's
-// name. The runtime has programs for the interface's ("UI", "Desaturate"); the others are
-// translated with the step that draws the world: until then each stays invalid, as one D3D9
-// refuses, and the runtime leaves out the draws that bind it.
+// As the D3D9 device's IShaderCreateVertex/Pixel: made when the context is up, from its record
+// (the runtime translates the DX9 bytecode, or uses its own program for the interface's "UI" and
+// "Desaturate"). A record the runtime refuses stays invalid, as one D3D9 refuses.
 void CGxDeviceVk::IShaderCreate(CGxShader* shader) {
     shader->m_valid = 0;
 
@@ -1271,13 +1381,32 @@ void CGxDeviceVk::IShaderCreate(CGxShader* shader) {
 
     shader->m_loaded = 1;
 
-    if (this->m_vk->shader_create(this, shader, shader->m_target == GxSh_Vertex, shader->m_key.m_str ? shader->m_key.m_str : "")) {
+    if (this->m_vk->shader_create(this, shader, shader->m_target == GxSh_Vertex, shader->m_key.m_str ? shader->m_key.m_str : "", shader->m_code.Count() ? shader->m_code.m_data : nullptr, shader->m_code.Count())) {
         shader->m_valid = 1;
     }
 }
 
 void CGxDeviceVk::ShaderCreate(CGxShader** shaders, EGxShTarget target, const char* path, const char* name, uint32_t permutations) {
     CGxDevice::ShaderCreate(shaders, target, path, name, permutations);
+
+    // Every permutation's record, just loaded: the runtime translates them ahead of their first bind.
+    if (this->m_vkMade && permutations && (target == GxSh_Vertex || target == GxSh_Pixel)) {
+        const void* codes[64];
+        uint32_t sizes[64];
+        uint32_t count = 0;
+
+        for (uint32_t i = 0; i < permutations && count < 64; i++) {
+            if (shaders[i] && shaders[i]->m_code.Count()) {
+                codes[count] = shaders[i]->m_code.m_data;
+                sizes[count] = shaders[i]->m_code.Count();
+                count++;
+            }
+        }
+
+        if (count) {
+            this->m_vk->shader_prewarm(this, codes, sizes, count);
+        }
+    }
 
     if (permutations == 1 && !shaders[0]->m_loaded) {
         this->IShaderCreate(shaders[0]);

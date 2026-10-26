@@ -7,10 +7,10 @@
 // Vulkan work to the runtime's table, one call each. The layout of CGxDevice is the stock one; what
 // this class adds follows it.
 //
-// The runtime draws the frame's clear, the engine's interface (its textures, pools and interface
-// programs on the device), Dear ImGui and the pointer; the world's draws are counted and left out
-// until the steps that draw it. Fullscreen is a borderless window over the monitor, minimised when
-// it loses the focus; the scene is the window's size.
+// The runtime draws the frame: the engine's interface and world (its textures, pools, render
+// targets, its shaders' records translated, its registers and occlusion queries on the device, its
+// copies from the back buffer), Dear ImGui and the pointer. Fullscreen is a borderless window over
+// the monitor, minimised when it loses the focus; the scene is the window's size.
 
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +48,7 @@ class CGxDeviceVk : public CGxDevice {
     void DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels) override;
     void DeviceReadDepths(CiRect& rect, TSGrowableArray<float>& depths) override;
     int32_t DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) override;
+    void DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint32_t plane) override;
     void DeviceOverride(EGxOverride override, uint32_t value) override;
     void CapsWindowSize(CRect& rect) override;
     void CapsWindowSizeInScreenCoords(CRect& rect) override;
@@ -64,6 +65,7 @@ class CGxDeviceVk : public CGxDevice {
     void TexDestroy(CGxTex* texId) override;
     int32_t TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane) override;
     int32_t TexStretch(CGxTex* dest, const CiRect* destRect, const CiRect* sourceRect, uint32_t level, uint32_t face) override;
+    void QueryDestroy(CGxQuery*& query) override;
     bool QueryBegin(CGxQuery* query) override;
     bool QueryEnd(CGxQuery* query) override;
     bool QueryGetParam(CGxQuery* query, EGxQueryParam param, uint32_t& data) override;
