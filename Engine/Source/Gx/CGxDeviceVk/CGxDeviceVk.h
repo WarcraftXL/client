@@ -106,4 +106,8 @@ class CGxDeviceVk : public CGxDevice {
 
 CGxDevice* CreateCGxDeviceVk();
 
+// The samples per pixel the Vulkan device in use draws its back buffer with (bit n: 2^n samples),
+// or 0 when the device in use is not a Vulkan one.
+uint32_t CGxDeviceVkSampleCounts();
+
 #endif

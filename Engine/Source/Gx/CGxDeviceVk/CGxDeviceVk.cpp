@@ -605,22 +605,33 @@ void* CGxDeviceVk::DeviceWindow() {
     return this->m_hwnd;
 }
 
+// As the D3D9 device: the back buffer's rectangle, resolved when multisampled, as the frame has
+// drawn it so far (the runtime submits what was recorded and waits for it). A read that fails
+// leaves the pixels black and transparent, so a caller that sizes its work by them stays in bounds.
 void CGxDeviceVk::DeviceReadPixels(CiRect& rect, TSGrowableArray<CImVector>& pixels) {
-    // The scene is not read back yet: the rectangle's pixels, black and transparent, so a caller
-    // that sizes its work by them stays in bounds.
     this->ClampRectToWindow(rect);
     uint32_t width = rect.maxX > rect.minX ? rect.maxX - rect.minX : 0;
     uint32_t height = rect.maxY > rect.minY ? rect.maxY - rect.minY : 0;
     pixels.SetCount(width * height);
 
-    if (width * height) {
+    if (!(width * height)) {
+        return;
+    }
+
+    if (!this->m_context || !this->m_vkMade || !this->m_vk->read_pixels(this, rect.minX, rect.minY, width, height, pixels.Ptr())) {
         memset(pixels.Ptr(), 0, width * height * sizeof(CImVector));
     }
 }
 
+// As the D3D9 device: the rectangle's depths all read as 0.
 void CGxDeviceVk::DeviceReadDepths(CiRect& rect, TSGrowableArray<float>& depths) {
-    (void)rect;
-    depths.SetCount(0);
+    this->ClampRectToWindow(rect);
+    uint32_t count = (rect.maxY - rect.minY) * (rect.maxX - rect.minX);
+    depths.SetCount(count);
+
+    if (count) {
+        memset(depths.Ptr(), 0, sizeof(float) * count);
+    }
 }
 
 int32_t CGxDeviceVk::DeviceWM(EGxWM wm, uintptr_t param1, uintptr_t param2) {
@@ -715,10 +726,25 @@ void CGxDeviceVk::CapsWindowSizeInScreenCoords(CRect& rect) {
     }
 }
 
+// The runtime's line on the device, after what the report holds already: its counts of what was
+// drawn and left out, by reason.
 void CGxDeviceVk::LogCrashInfo(char* buffer, uint32_t size) {
     if (this->m_vk && buffer && size) {
-        this->m_vk->describe(this, buffer, size);
+        char line[2048];
+        this->m_vk->describe(this, line, sizeof(line));
+        SStrPack(buffer, line, size);
+        SStrPack(buffer, "\r\n", size);
     }
+}
+
+uint32_t CGxDeviceVkSampleCounts() {
+    CGxDeviceVk* device = g_theGxDevicePtr && g_theGxDevicePtr->m_api == GxApi_Vulkan ? static_cast<CGxDeviceVk*>(g_theGxDevicePtr) : nullptr;
+
+    if (!device || !device->m_vk || !device->m_vkMade) {
+        return 0;
+    }
+
+    return device->m_vk->sample_counts(device);
 }
 
 void CGxDeviceVk::SimulateLoss() {
