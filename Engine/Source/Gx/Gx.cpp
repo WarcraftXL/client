@@ -40,7 +40,7 @@ static BlitFormat s_blitFormats[GxTexFormats_Last] = {
 };
 
 // STATIC: 0x00AD87E4
-const char* g_gxApiNames[GxApis_Last] = { "OpenGL", "D3D9", "D3D9Ex", "D3D10", "D3D11", "GLL" };
+const char* g_gxApiNames[GxApis_Last] = { "OpenGL", "D3D9", "D3D9Ex", "D3D10", "D3D11", "GLL", "Vulkan" };
 
 // STATIC: 0x00AD8AC0
 static uint32_t s_vertexSize[GxVertexBufferFormats_Last] = { 12, 24, 28, 32, 36, 40, 44, 16, 24, 32, 20, 28, 48, 48 };
@@ -131,6 +131,12 @@ int32_t GxApiSupported(EGxApi api) {
         case GxApi_D3d9Ex:
             return 1;
 
+#if defined(WOWDECOMP_ARCH_64)
+        // Offered while the runtime carries the renderer; a machine without it falls back to D3D9.
+        case GxApi_Vulkan:
+            return 1;
+#endif
+
         default:
             return 0;
     }
@@ -198,6 +204,13 @@ CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& 
             device = CreateCGxDeviceD3d9Ex();
             g_theGxDevicePtr = device;
             break;
+
+#if defined(WOWDECOMP_ARCH_64)
+        case GxApi_Vulkan:
+            device = CreateCGxDeviceVk();
+            g_theGxDevicePtr = device;
+            break;
+#endif
 
         default:
             device = g_theGxDevicePtr;

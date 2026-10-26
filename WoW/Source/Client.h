@@ -37,6 +37,8 @@ enum WOWCMDOPT {
     CMD_CONSOLE = 35,
     CMD_HW_DETECT = 36,
     CMD_GX_OVERRIDE = 39,
+    // WarcraftXL's Vulkan device (-vulkan), after the ids WoW uses.
+    CMD_VULKAN = 40,
 };
 
 struct ARCHIVEINFO {

@@ -49,6 +49,11 @@ int32_t CGxDevice::AdapterFormats(EGxApi api, TSGrowableArray<CGxFormat>& format
             CGxDevice::D3d9ExAdapterFormats(formats);
             break;
 
+        // The Vulkan device offers the back buffers D3D9 does, and falls back to D3D9.
+        case GxApi_Vulkan:
+            CGxDevice::D3dAdapterFormats(formats);
+            break;
+
         default:
             break;
     }

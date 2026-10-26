@@ -215,6 +215,9 @@ foreach (target ${WXL_SEAM_LIBRARIES})
         target_link_libraries(${target} PRIVATE wxl-core)
     endif ()
 endforeach ()
+# The Vulkan device's adapter (Gx/CGxDeviceVk) holds the runtime to the CGxDevice layout of the
+# SDK's engine headers.
+target_include_directories(Gx PRIVATE "${WXL_SDK_DIR}/engine/include")
 foreach (target ${WXL_ZONE_LIBRARIES} ${WXL_POINT_LIBRARIES})
     target_include_directories(${target} PRIVATE "${WXL_CORE_DIR}/include" "${WXL_SDK_DIR}/include")
     target_link_libraries(${target} PRIVATE wxl-core)

@@ -17,7 +17,9 @@ enum EGxApi {
     GxApi_D3d10 = 3,
     GxApi_D3d11 = 4,
     GxApi_GLL = 5,
-    GxApis_Last = 6,
+    // WarcraftXL's Vulkan renderer (WarcraftXL/GxVulkan.h), appended after the stock APIs.
+    GxApi_Vulkan = 6,
+    GxApis_Last = 7,
 };
 
 enum EGxBlend {
