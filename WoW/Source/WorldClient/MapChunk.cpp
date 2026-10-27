@@ -242,6 +242,8 @@ void CMapChunk::ProcessIffChunks(bool a3) {
         remaining -= chunk->m_size;
         chunk = reinterpret_cast<SIffChunk*>(data + chunk->m_size);
     }
+
+    wxl::seam::MapChunk::ProcessIffChunks::After(this, a3);
 }
 
 // VERIFY: 86d6cd8c manual
@@ -959,6 +961,12 @@ void CMapChunk::CreateSoundEmitters(bool a3) {
 // VERIFY: 80daf949 manual
 // OFFSET: 0x007C6150
 void CMapChunk::CreateRefs(CMapArea* area, uint32_t* mcrfPtr, uint32_t doodadRefs, uint32_t mapObjRefs) {
+    void* self = this;
+    void* gateArea = area;
+    if (wxl::seam::MapChunk::CreateRefs::Gate(&self, &gateArea, &mcrfPtr, &doodadRefs, &mapObjRefs)) {
+        return;
+    }
+
     C3Vector center(17066.666f, 17066.666f, 0.0f);
     uint32_t* mapObjRefList = &mcrfPtr[doodadRefs];
 

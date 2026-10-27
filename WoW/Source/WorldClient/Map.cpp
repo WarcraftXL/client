@@ -3112,6 +3112,7 @@ void CMap::FreeMapObjGroup(CMapObjGroup* mapObjGroup) {
 // VERIFY: 8cfa8101 manual
 // OFFSET: 0x007C00A0
 void CMap::FreeArea(CMapArea* area) {
+    wxl::seam::Map::FreeArea::Before(area);
     area->m_lameAssLink.Unlink();
     area->~CMapArea();
     ObjectFree(*CMap::areaHeap, area->m_objectIndex);

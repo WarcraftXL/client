@@ -809,6 +809,58 @@ namespace WarcraftXL::Binding {
         return out->data && out->size ? WXL_TRUE : WXL_FALSE;
     }
 
+    wxl_bool WXL_CALL map_area_split_set(void* area, const wxl_core_area_split* split) {
+        if (!area || !split) {
+            return WXL_FALSE;
+        }
+        CMapArea* a = static_cast<CMapArea*>(area);
+        a->m_chunkInfo = static_cast<SMChunkInfo*>(split->chunk_info);
+        a->m_doodadDef = static_cast<SMDoodadDef*>(split->doodad_defs);
+        a->m_mapObjDef = static_cast<SMMapObjDef*>(split->map_obj_defs);
+        a->m_doodadDefCount = static_cast<int32_t>(split->doodad_count);
+        a->m_mapObjDefCount = static_cast<int32_t>(split->map_obj_count);
+        a->m_m2FileNames = split->model_names;
+        a->m_wmoFileNames = split->map_obj_names;
+        a->m_modelFilenamesOffsets = split->model_offsets;
+        a->m_wmoFilenamesOffsets = split->map_obj_offsets;
+        a->m_textureFlags = split->texture_flags;
+        if (split->texture_names && split->texture_names_size) {
+            a->LoadTextures(split->texture_names, split->texture_names_size);
+        }
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_chunk_parts(const void* chunk, wxl_core_map_chunk* out) {
+        if (!chunk || !out) {
+            return WXL_FALSE;
+        }
+        const CMapChunk* c = static_cast<const CMapChunk*>(chunk);
+        out->begin = c->m_chunkInfoBeginPtr;
+        out->header = c->m_header;
+        out->index_x = c->m_aIndex.x;
+        out->index_y = c->m_aIndex.y;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_chunk_split_set(void* chunk, const wxl_core_chunk_split* split) {
+        if (!chunk || !split) {
+            return WXL_FALSE;
+        }
+        CMapChunk* c = static_cast<CMapChunk*>(chunk);
+        c->m_layers = static_cast<SMLayer*>(split->layers);
+        c->m_additionalShadowmap = static_cast<uint8_t*>(split->alpha);
+        c->m_shadowMap = static_cast<uint8_t*>(split->shadow);
+        c->m_mcrfPtr = static_cast<uint8_t*>(split->refs);
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL map_chunk_create_refs(void* chunk, void* area, const uint32_t* refs, uint32_t doodads, uint32_t map_objs) {
+        if (!chunk || !area || (!refs && (doodads || map_objs))) {
+            return;
+        }
+        static_cast<CMapChunk*>(chunk)->CreateRefs(static_cast<CMapArea*>(area), const_cast<uint32_t*>(refs), doodads, map_objs);
+    }
+
     const float* WXL_CALL terrain_vertex_constants(void) {
         return reinterpret_cast<const float*>(&CMapRenderChunk::s_vertexShaderConsts);
     }
