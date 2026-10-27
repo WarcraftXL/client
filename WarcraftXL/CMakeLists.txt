@@ -190,10 +190,11 @@ endforeach ()
 
 # --- The client's side of the boundary -------------------------------------------------------------
 # What the client hands the runtime: the accessors of wxl_core_init, one function per row of
-# core's binding table (Binding.cpp), assigned by Init.cpp. Linked by every executable and by
+# core's binding table (Binding.cpp, and ScriptUnwind.cpp for the rows inside the Lua state),
+# assigned by Init.cpp. Linked by every executable and by
 # WorldClient, whose World.cpp holds the seam calls. GxCapture.cpp records a frame of the D3D9
 # device (gxCapture) in core's capture format, for the Vulkan renderer's tests.
-add_library(WarcraftXLClient STATIC Init.cpp Binding.cpp EngineLayouts.gen.cpp GxCapture.cpp)
+add_library(WarcraftXLClient STATIC Init.cpp Binding.cpp ScriptUnwind.cpp EngineLayouts.gen.cpp GxCapture.cpp)
 target_include_directories(WarcraftXLClient
     PUBLIC
         "${WXL_CORE_DIR}/include"
