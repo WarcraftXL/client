@@ -2059,9 +2059,30 @@ namespace WarcraftXL::Binding {
         return area->m_mapChunks[16 * (chunk_y & 15) + (chunk_x & 15)];
     }
 
+    void* WXL_CALL map_area_chunk(const void* area, int32_t chunk_x, int32_t chunk_y) {
+        if (!area || chunk_x < 0 || chunk_y < 0 || chunk_x > 15 || chunk_y > 15) {
+            return nullptr;
+        }
+        return static_cast<const CMapArea*>(area)->m_mapChunks[16 * chunk_y + chunk_x];
+    }
+
+    wxl_bool WXL_CALL terrain_chunk_place(const void* chunk, int32_t* chunk_x, int32_t* chunk_y) {
+        const CMapChunk* map = static_cast<const CMapChunk*>(chunk);
+        if (reinterpret_cast<uintptr_t>(map) < 0x10000 || !chunk_x || !chunk_y) {
+            return WXL_FALSE;
+        }
+        *chunk_x = map->m_cOffset.x;
+        *chunk_y = map->m_cOffset.y;
+        return *chunk_x >= 0 && *chunk_x < 1024 && *chunk_y >= 0 && *chunk_y < 1024 ? WXL_TRUE : WXL_FALSE;
+    }
+
     wxl_bool WXL_CALL terrain_chunk_view(void* chunk, wxl_core_terrain_chunk* out) {
         const CMapChunk* map = static_cast<const CMapChunk*>(chunk);
-        if (!map || !out || !map->m_height || !map->m_normals) {
+        if (reinterpret_cast<uintptr_t>(map) < 0x10000 || !out) {
+            return WXL_FALSE;
+        }
+        // Only a live chunk: its place on the map leads back to it through its tile's slot.
+        if (terrain_chunk(map->m_cOffset.x, map->m_cOffset.y) != chunk || !map->m_height || !map->m_normals) {
             return WXL_FALSE;
         }
         out->chunk_x = map->m_cOffset.x;
