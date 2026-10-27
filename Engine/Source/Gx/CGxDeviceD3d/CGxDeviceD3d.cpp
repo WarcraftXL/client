@@ -3305,7 +3305,10 @@ void CGxDeviceD3d::ScenePresent() {
 // VERIFY: ada703ca manual
 // OFFSET: 0x006A3620
 void CGxDeviceD3d::Draw(CGxBatch* batch, int32_t count) {
+    wxl::seam::Gx::D3dDraw::Before(this, batch, count);
+
     if (!this->m_context || this->m_intF5C) {
+        wxl::seam::Gx::D3dDraw::After(this, batch, count);
         return;
     }
 
@@ -3335,6 +3338,8 @@ void CGxDeviceD3d::Draw(CGxBatch* batch, int32_t count) {
         uint32_t primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
         this->m_d3dDevice->DrawPrimitive(s_primitiveConversion[batch->m_primType], baseVertexIndex, primCount);
     }
+
+    wxl::seam::Gx::D3dDraw::After(this, batch, count);
 }
 
 // VERIFY: 3259f92c auto
