@@ -2125,4 +2125,53 @@ namespace WarcraftXL::Binding {
             unit->m_movement->OnFallLocal(OsGetAsyncTimeMs());
         }
     }
+
+    // --- Animation: a unit's animation as the client plays it --------------------------------
+
+    CGUnit_C* UnitOf(void* object) {
+        return const_cast<CGUnit_C*>(static_cast<const CGUnit_C*>(Object(object)));
+    }
+
+    void WXL_CALL unit_play_animation(void* object, uint32_t anim, uint32_t flags) {
+        if (CGUnit_C* unit = UnitOf(object)) {
+            unit->PlayBaseAnimation(anim, static_cast<int32_t>(flags));
+        }
+    }
+
+    void WXL_CALL unit_update_animation(void* object) {
+        if (CGUnit_C* unit = UnitOf(object)) {
+            unit->UpdateBaseAnimation(0, -1);
+        }
+    }
+
+    uint32_t WXL_CALL unit_shown_animation(const void* object) {
+        const CGUnit_C* unit = static_cast<const CGUnit_C*>(Object(object));
+        return unit ? unit->GetCurrentTorsoAnimId() : 0xFFFFFFFFu;
+    }
+
+    void WXL_CALL unit_animation_speed(void* object, uint32_t anim, float speed) {
+        CGUnit_C* unit = UnitOf(object);
+        CM2Model* model = unit ? unit->m_worldModel : nullptr;
+        if (!model || !(model->m_fFlags & 1)) {
+            return;
+        }
+        if (model->GetBoneSequenceId(0xFFFFFFFF) == anim) {
+            unit->SetKeyBoneSequenceSpeed(model, 0xFFFFFFFF, speed, 0);
+        }
+        if (unit->m_torsoKeyBone != -1 && model->GetBoneSequenceId(static_cast<uint32_t>(unit->m_torsoKeyBone)) == anim) {
+            unit->SetKeyBoneSequenceSpeed(model, static_cast<uint32_t>(unit->m_torsoKeyBone), speed, 0);
+        }
+    }
+
+    uint32_t WXL_CALL unit_animation_length(const void* object, uint32_t anim) {
+        const CGUnit_C* unit = static_cast<const CGUnit_C*>(Object(object));
+        return unit && unit->m_worldModel ? m2_animation_length(unit->m_worldModel, anim) : 0;
+    }
+
+    void WXL_CALL unit_lift_local(void* object, float z) {
+        CGUnit_C* unit = UnitOf(object);
+        if (unit && unit->m_movement) {
+            unit->m_movement->m_position.z = z;
+        }
+    }
 }
