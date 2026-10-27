@@ -8,6 +8,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
+#include "WarcraftXL/Seams.h"
 #include "Engine/Source/Os/Processor.h"
 #include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -50,6 +51,13 @@ void CM2Cache::ClearSharedHash() {
 // VERIFY: de6dcef8 auto
 // OFFSET: 0x0081BFA0
 void CM2Cache::BeginThread(void (*func)(void*), void* param) {
+    void* wxlSelf = this;
+    void* wxlFunc = reinterpret_cast<void*>(func);
+    void* wxlParam = param;
+    if (wxl::seam::M2::BeginThread::Gate(&wxlSelf, &wxlFunc, &wxlParam)) {
+        return;
+    }
+
     this->m_threadFunc = func;
     this->m_threadParam = param;
     this->m_threadStart.Set();
@@ -58,6 +66,11 @@ void CM2Cache::BeginThread(void (*func)(void*), void* param) {
 // VERIFY: b68bbc6f auto
 // OFFSET: 0x0081BFD0
 void CM2Cache::WaitThread() {
+    void* wxlSelf = this;
+    if (wxl::seam::M2::WaitThread::Gate(&wxlSelf)) {
+        return;
+    }
+
     this->m_threadDone.Wait(0xFFFFFFFF);
 }
 

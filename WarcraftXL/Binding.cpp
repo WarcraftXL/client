@@ -1012,6 +1012,48 @@ namespace WarcraftXL::Binding {
         return out->bones ? WXL_TRUE : WXL_FALSE;
     }
 
+    wxl_bool WXL_CALL m2_is_animate_thread(const void* function) {
+        return function == reinterpret_cast<const void*>(&CM2Scene::AnimateThread) ? WXL_TRUE : WXL_FALSE;
+    }
+
+    uint32_t WXL_CALL m2_animate_list(const void* scene, void** out, uint32_t capacity) {
+        if (!scene) {
+            return 0;
+        }
+        constexpr uint32_t kMost = 1u << 20;
+        uint32_t count = 0;
+        for (CM2Model* model = static_cast<const CM2Scene*>(scene)->m_animateList; model && count < kMost; model = model->m_animateNext) {
+            if (out && count < capacity) {
+                out[count] = model;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+    void* WXL_CALL m2_swap_animate_list(void* scene, void* head) {
+        if (!scene) {
+            return nullptr;
+        }
+        CM2Scene* s = static_cast<CM2Scene*>(scene);
+        CM2Model* was = s->m_animateList;
+        s->m_animateList = static_cast<CM2Model*>(head);
+        return was;
+    }
+
+    void WXL_CALL m2_animate_model(void* model, void* scene) {
+        if (!model || !scene) {
+            return;
+        }
+        CM2Model* m = static_cast<CM2Model*>(model);
+        CM2Scene* s = static_cast<CM2Scene*>(scene);
+        if (m->m_fFlags & 0x1000) {
+            m->AnimateMTSimple(&s->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+        } else {
+            m->AnimateMT(&s->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+        }
+    }
+
     // --- Memory -----------------------------------------------------------------------------
     // Each row walks the client's own lists, as wxl.footprint asks on the main thread.
 
