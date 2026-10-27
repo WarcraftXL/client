@@ -42,6 +42,9 @@
 // STATIC: 0x00A45570
 static const uint32_t s_ribbonBlendModes[] = { 0, 1, 2, 10, 3, 4, 5, 12 };
 
+// Not in the original: the bones a shadow map draw hands the bone palette (GxBonePaletteSet).
+static C34Matrix s_paletteBones[256];
+
 // STATIC: 0x00D4118C
 void (*CM2Model::s_transformVertices[5])(CM2Model*, M2SkinSection*, uint8_t*, int32_t);
 
@@ -2951,7 +2954,16 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
             instances = total - done;
         }
 
-        if (total > 1 || !prevSection || section->m_boneComboIndex != prevSection->m_boneComboIndex) {
+        if ((total > 1 || !prevSection || section->m_boneComboIndex != prevSection->m_boneComboIndex) && g_theGxDevicePtr->Caps().BonePalette()) {
+            // Not in the original: a device with a bone palette takes every instance's bones there.
+            C34Matrix* bones = s_paletteBones;
+
+            for (uint32_t n = 0; n < instances && bones + section->m_boneCount <= s_paletteBones + 256; n++) {
+                bones = M2PaletteBones(bones, list.m_batches[done + index + n].m_model, this->m_shared->m_data, section->m_boneComboIndex, section->m_boneCount);
+            }
+
+            GxBonePaletteSet(s_paletteBones, static_cast<uint32_t>(bones - s_paletteBones));
+        } else if (total > 1 || !prevSection || section->m_boneComboIndex != prevSection->m_boneComboIndex) {
             float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
             uint32_t registers = 0;
 

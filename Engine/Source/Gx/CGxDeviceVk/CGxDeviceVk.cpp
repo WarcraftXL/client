@@ -890,6 +890,12 @@ void CGxDeviceVk::Draw(CGxBatch* batch, int32_t count) {
     }
 }
 
+void CGxDeviceVk::BonePaletteSet(const C34Matrix* bones, uint32_t count) {
+    if (this->m_vkMade) {
+        this->m_vk->bone_palette(this, reinterpret_cast<const float*>(bones), count);
+    }
+}
+
 // As the D3D9 device: the base class only keeps the projection; the native one is D3D's, z in [0, 1].
 void CGxDeviceVk::XformSetProjection(const C44Matrix& matrix) {
     CGxDevice::XformSetProjection(matrix);

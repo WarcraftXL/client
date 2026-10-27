@@ -11,6 +11,10 @@
 #include "Engine/Source/Storm/H/storm.h"
 #include "WarcraftXL/Seams.h"
 
+#if defined(WOWDECOMP_ARCH_64)
+#include "Engine/Source/Gx/CGxDeviceVk/CGxDeviceVk.h"
+#endif
+
 // STATIC: 0x00A2D57C
 static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
 
@@ -294,6 +298,15 @@ void GxShaderConstantsSet(EGxShTarget target, uint32_t index, const float* const
     if (constants) {
         g_theGxDevicePtr->ShaderConstantsSet(target, index, constants, count);
     }
+}
+
+// Not in the original: a bone palette exists only on the Vulkan device, which says so in its caps.
+void GxBonePaletteSet(const C34Matrix* bones, uint32_t count) {
+#if defined(WOWDECOMP_ARCH_64)
+    if (g_theGxDevicePtr->m_api == GxApi_Vulkan && g_theGxDevicePtr->Caps().BonePalette()) {
+        static_cast<CGxDeviceVk*>(g_theGxDevicePtr)->BonePaletteSet(bones, count);
+    }
+#endif
 }
 
 // VERIFY: 2d7b5b76 manual

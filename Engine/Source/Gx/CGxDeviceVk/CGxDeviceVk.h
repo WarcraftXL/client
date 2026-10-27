@@ -16,6 +16,7 @@
 #include <cstdint>
 #include <windows.h>
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
+#include "Engine/Source/Tempest/C34Matrix.h"
 
 struct wxl_gx_vk_backend;
 
@@ -89,6 +90,9 @@ class CGxDeviceVk : public CGxDevice {
 
     // The gxVkSimulateLoss console command: the device is marked lost, as a real loss would.
     void SimulateLoss();
+
+    // GxBonePaletteSet: the bones the next skinned draws read, in the place of the registers from c31.
+    void BonePaletteSet(const C34Matrix* bones, uint32_t count);
 
     private:
     int32_t ICreateWindow(CGxFormat& format);

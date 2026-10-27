@@ -8,6 +8,7 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Tempest/C2iVector.h"
+#include "Engine/Source/Tempest/C34Matrix.h"
 
 static const float oo255 = (1.0f / 255.0f);
 
@@ -127,6 +128,9 @@ void GxTexSetWrap(CGxTex* texId, EGxTexWrapMode wrapU, EGxTexWrapMode wrapV);
 void GxSetMaxFPS(uint32_t maxFPS);
 void GxSetMaxFPSBk(uint32_t maxFPSBk);
 void GxShaderConstantsSet(EGxShTarget target, uint32_t index, const float* constants, uint32_t count);
+// Not in the original: the bones the next skinned draws read (C34Matrix each), on a device whose
+// caps hold a bone palette (CGxCaps::BonePalette), in the place of the vertex registers from c31.
+void GxBonePaletteSet(const C34Matrix* bones, uint32_t count);
 int32_t GxTexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane);
 void GxTexDestroy(CGxTex* texId);
 int32_t GxTexReusable(CGxTexParms& parms);

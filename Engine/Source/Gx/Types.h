@@ -254,6 +254,15 @@ class CGxCaps {
     /* 0130 */ int32_t m_shaderAlphaRef;
     /* 0134 */ int32_t unk_0134;
     /* 0138 */ int32_t unk_0138;
+
+    // Not in the original: caps of the recompiled client's own devices, kept in words the stock
+    // layout leaves unused (wxl/core/gx_vk.h, WXL_GX_VK_CAP_*); the D3D9 devices leave them zero.
+
+    // The bones a bone palette holds (GxBonePaletteSet); 0: none, the bones go through the vertex
+    // registers from c31.
+    uint32_t BonePalette() const {
+        return this->unused_0114[0];
+    }
 };
 
 class CGxQuery {

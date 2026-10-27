@@ -8,6 +8,7 @@
 #include "Engine/Source/Model2/M2Shared.h"
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/C3Vector.h"
+#include "Engine/Source/Tempest/C34Matrix.h"
 #include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Tempest/C4Quaternion.h"
 #include "Engine/Source/Tempest/CAaBox.h"
@@ -498,6 +499,29 @@ M2ModelTrack<T>::M2ModelTrack() {
     this->m_currentKey = 0;
     this->m_secondaryKey = 0;
     memset(&this->m_currentValue, 0, sizeof(T));
+}
+
+// Not in the original: the bones of @p count bone combos of @p data from @p combo, as @p model
+// poses them, written at @p out as a bone palette takes them (GxBonePaletteSet). Answers where the
+// next model's bones go.
+inline C34Matrix* M2PaletteBones(C34Matrix* out, CM2Model* model, M2Data* data, uint32_t combo, uint32_t count) {
+    for (uint32_t i = 0; i < count; i++, out++) {
+        const C44Matrix& bone = model->m_boneMatrices[data->m_boneCombos[combo + i]];
+        out->a0 = bone.a0;
+        out->a1 = bone.a1;
+        out->a2 = bone.a2;
+        out->b0 = bone.b0;
+        out->b1 = bone.b1;
+        out->b2 = bone.b2;
+        out->c0 = bone.c0;
+        out->c1 = bone.c1;
+        out->c2 = bone.c2;
+        out->d0 = bone.d0;
+        out->d1 = bone.d1;
+        out->d2 = bone.d2;
+    }
+
+    return out;
 }
 
 #endif

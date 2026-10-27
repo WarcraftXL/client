@@ -1141,10 +1141,14 @@ int32_t CM2Shared::InitializeSkinProfile() {
 
     M2SkinProfile* skinData = this->m_skinData;
 
+    // Not in the original: with a bone palette the bones of the instances drawn at once are
+    // bounded by the palette, not by the skin's vertex registers.
+    uint32_t boneBudget = g_theGxDevicePtr->Caps().BonePalette() ? g_theGxDevicePtr->Caps().BonePalette() : skinData->m_boneCountMax;
+
     this->m_maxInstances = skinData->m_indices.m_count ? 0x10000 / skinData->m_indices.m_count : 1;
 
     for (uint32_t i = 0; i < skinData->m_skinSections.m_count; i++) {
-        uint32_t instances = skinData->m_boneCountMax / skinData->m_skinSections[i].m_boneCount;
+        uint32_t instances = boneBudget / skinData->m_skinSections[i].m_boneCount;
 
         if (this->m_maxInstances > instances) {
             this->m_maxInstances = instances;
@@ -1680,6 +1684,11 @@ int32_t CM2Shared::Initialize() {
     if (this->m_cache->m_flags & 8) {
         uint32_t constants = g_theGxDevicePtr->Caps().m_shaderConstants[0];
         uint32_t bones = (constants > 0xC0 ? constants - 64 : constants - 32) / 3;
+
+        // Not in the original: a device with a bone palette draws as many bones as it holds.
+        if (g_theGxDevicePtr->Caps().BonePalette()) {
+            bones = g_theGxDevicePtr->Caps().BonePalette();
+        }
 
         if (bones < maxBones) {
             maxBones = bones;
