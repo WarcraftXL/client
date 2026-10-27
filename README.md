@@ -126,7 +126,10 @@ show it); the client's shaders are their records translated by the runtime from
 DX9 bytecode, once per machine. Screenshots and the portraits read the frame back as on D3D9;
 `gxMultisample` multisamples it, the video options offering the counts the Vulkan device has, and
 the draws the engine keeps unsmoothed (the quest areas on the world map) stay hard-edged where the
-device has sample locations. A
+device has sample locations. On the Vulkan device the models' bones go through a bone palette
+(`GxBonePaletteSet`, 256 bones a draw: models load their largest skin profile, doodads instance
+more at once), skins past 16 bits of indices through pools of 32-bit indices, and textures load up
+to 16384 texels a side (the device permitting); D3D9 keeps the engine's own limits. A
 machine without Vulkan 1.3 stays on D3D9, and the log says why. Two console commands serve the renderer's tests: `gxVkSimulateLoss` (the Vulkan device lost and
 made again) and `gxCapture` (the next frame of the D3D9 device recorded to `WarcraftXL\captures\`).
 
