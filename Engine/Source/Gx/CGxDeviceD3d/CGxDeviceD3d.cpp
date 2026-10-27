@@ -814,9 +814,12 @@ void CGxDeviceD3d::XformSetView(const C44Matrix& matrix) {
 // VERIFY: 4be0f29d auto
 // OFFSET: 0x006AA070
 void CGxDeviceD3d::IShaderCreatePixel(CGxShader* shader) {
+    wxl::seam::Gx::D3dIShaderCreatePixel::Before(this, shader);
+
     shader->m_valid = 0;
 
     if (!this->m_context) {
+        wxl::seam::Gx::D3dIShaderCreatePixel::After(this, shader);
         return;
     }
 
@@ -828,14 +831,19 @@ void CGxDeviceD3d::IShaderCreatePixel(CGxShader* shader) {
         shader->m_apiSpecific = pixelShader;
         shader->m_valid = 1;
     }
+
+    wxl::seam::Gx::D3dIShaderCreatePixel::After(this, shader);
 }
 
 // VERIFY: 42b1d4b6 auto
 // OFFSET: 0x006AA0D0
 void CGxDeviceD3d::IShaderCreateVertex(CGxShader* shader) {
+    wxl::seam::Gx::D3dIShaderCreateVertex::Before(this, shader);
+
     shader->m_valid = 0;
 
     if (!this->m_context) {
+        wxl::seam::Gx::D3dIShaderCreateVertex::After(this, shader);
         return;
     }
 
@@ -847,6 +855,8 @@ void CGxDeviceD3d::IShaderCreateVertex(CGxShader* shader) {
         shader->m_apiSpecific = vertexShader;
         shader->m_valid = 1;
     }
+
+    wxl::seam::Gx::D3dIShaderCreateVertex::After(this, shader);
 }
 
 // VERIFY: 38fa5626 manual

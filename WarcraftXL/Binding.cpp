@@ -678,6 +678,52 @@ namespace WarcraftXL::Binding {
         }
     }
 
+    void WXL_CALL gx_pixel_constants_set(uint32_t first, const float* rows, uint32_t count) {
+        if (g_theGxDevicePtr && rows && count) {
+            GxShaderConstantsSet(GxSh_Pixel, first, rows, count);
+        }
+    }
+
+    void* WXL_CALL gx_texture_stage(uint32_t stage) {
+        if (!g_theGxDevicePtr || stage > 15) {
+            return nullptr;
+        }
+        return g_theGxDevicePtr->m_appRenderStates[GxRs_Texture0 + stage].m_value.m_data.p;
+    }
+
+    void WXL_CALL gx_texture_stage_set(uint32_t stage, void* texture) {
+        if (g_theGxDevicePtr && stage <= 15) {
+            g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + stage), texture);
+        }
+    }
+
+    void WXL_CALL gx_texture_wrap(void* texture) {
+        if (g_theGxDevicePtr && texture) {
+            GxTexSetWrap(static_cast<CGxTex*>(texture), GxTex_Wrap, GxTex_Wrap);
+        }
+    }
+
+    wxl_bool WXL_CALL gx_shader_record(const void* shader, wxl_core_shader_record* out) {
+        if (!shader || !out) {
+            return WXL_FALSE;
+        }
+        const CGxShader* record = static_cast<const CGxShader*>(shader);
+        out->name = record->m_key.m_str;
+        out->target = record->m_target;
+        out->code = record->m_code.m_data;
+        out->size = record->m_code.m_count;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL gx_shader_code_set(void* shader, const void* code, uint32_t size) {
+        if (!shader) {
+            return;
+        }
+        CGxShader* record = static_cast<CGxShader*>(shader);
+        record->m_code.m_data = static_cast<uint8_t*>(const_cast<void*>(code));
+        record->m_code.m_count = size;
+    }
+
     wxl_bool WXL_CALL gx_xform_get(uint32_t xform, float* matrix) {
         if (!g_theGxDevicePtr || !matrix || xform > GxXform_View) {
             return WXL_FALSE;
