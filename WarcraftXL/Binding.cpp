@@ -80,6 +80,7 @@
 #include "WoW/Source/Ui/PartyFrame.h"
 #include "WoW/Source/Ui/RaidInfo.h"
 #include "WoW/Source/WorldClient/MapArea.h"
+#include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
 #include "WoW/Source/WorldClient/MapRenderChunk.h"
 #include "WoW/Source/WorldClient/DetailDoodad.h"
@@ -2179,6 +2180,19 @@ namespace WarcraftXL::Binding {
         if (unit && unit->m_movement) {
             unit->m_movement->OnFallLocal(OsGetAsyncTimeMs());
         }
+    }
+
+    // --- NetClient: a message of a mod's, sent as the client sends its own -----------------------
+
+    wxl_bool WXL_CALL net_send(const void* message, uint32_t size) {
+        // ClientServices::Send2 ends the client when there is no connection: ask first.
+        if (!message || size < 4 || !ClientServices::s_currentConnection) {
+            return WXL_FALSE;
+        }
+        // Over the message's bytes, m_alloc -1: nothing to free, as the client wraps what it receives.
+        CDataStore msg(static_cast<uint8_t*>(const_cast<void*>(message)), size);
+        ClientServices::Send2(&msg);
+        return WXL_TRUE;
     }
 
     // --- Animation: a unit's animation as the client plays it --------------------------------
