@@ -704,6 +704,25 @@ namespace WarcraftXL::Binding {
         }
     }
 
+    int32_t WXL_CALL gx_render_state(uint32_t which) {
+        if (!g_theGxDevicePtr || which >= GxRenderStates_Last) {
+            return 0;
+        }
+        return g_theGxDevicePtr->m_appRenderStates[which].m_value.m_data.i[0];
+    }
+
+    void WXL_CALL gx_render_state_set(uint32_t which, int32_t value) {
+        if (g_theGxDevicePtr && which < GxRenderStates_Last) {
+            GxRsSet(static_cast<EGxRenderState>(which), value);
+        }
+    }
+
+    void WXL_CALL gx_draw(const void* batch, int32_t count) {
+        if (g_theGxDevicePtr && batch) {
+            g_theGxDevicePtr->Draw(const_cast<CGxBatch*>(static_cast<const CGxBatch*>(batch)), count);
+        }
+    }
+
     wxl_bool WXL_CALL gx_shader_record(const void* shader, wxl_core_shader_record* out) {
         if (!shader || !out) {
             return WXL_FALSE;
@@ -760,7 +779,22 @@ namespace WarcraftXL::Binding {
         }
         out->batch = &c->m_batch;
         out->map_chunk = c->m_mapChunks[0];
+        out->map_chunk2 = c->m_mapChunks[1];
+        out->pair = c->m_unkFlags & 3u;
         return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_wdt(wxl_core_wdt* out) {
+        if (!out) {
+            return WXL_FALSE;
+        }
+        out->path = CMap::wdtFilename;
+        out->flags = &CMap::header.m_flags;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL map_validate_shaders() {
+        CMap::ValidateShaders();
     }
 
     wxl_bool WXL_CALL terrain_area_file(const void* area, wxl_core_area_file* out) {

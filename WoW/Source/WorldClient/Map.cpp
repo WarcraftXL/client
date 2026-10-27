@@ -3011,6 +3011,8 @@ void CMap::LoadWdt() {
 
     CMap::ValidateShaders();
     SFileCloseFile(file);
+
+    wxl::seam::Map::LoadWdt::After();
 }
 
 // VERIFY: 99e76495 manual
