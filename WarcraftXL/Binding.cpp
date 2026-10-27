@@ -830,6 +830,23 @@ namespace WarcraftXL::Binding {
         return WXL_TRUE;
     }
 
+    wxl_bool WXL_CALL map_area_placements(const void* area, wxl_core_area_split* out) {
+        if (!area || !out) {
+            return WXL_FALSE;
+        }
+        const CMapArea* a = static_cast<const CMapArea*>(area);
+        *out = wxl_core_area_split{};
+        out->doodad_defs = a->m_doodadDef;
+        out->map_obj_defs = a->m_mapObjDef;
+        out->doodad_count = static_cast<uint32_t>(a->m_doodadDefCount);
+        out->map_obj_count = static_cast<uint32_t>(a->m_mapObjDefCount);
+        out->model_names = a->m_m2FileNames;
+        out->map_obj_names = a->m_wmoFileNames;
+        out->model_offsets = a->m_modelFilenamesOffsets;
+        out->map_obj_offsets = a->m_wmoFilenamesOffsets;
+        return WXL_TRUE;
+    }
+
     wxl_bool WXL_CALL map_chunk_parts(const void* chunk, wxl_core_map_chunk* out) {
         if (!chunk || !out) {
             return WXL_FALSE;
