@@ -80,6 +80,10 @@
 #include "WoW/Source/Ui/PartyFrame.h"
 #include "WoW/Source/Ui/RaidInfo.h"
 #include "WoW/Source/WorldClient/MapArea.h"
+#include "WoW/Source/WorldClient/MapChunk.h"
+#include "WoW/Source/WorldClient/MapRenderChunk.h"
+#include "WoW/Source/WorldClient/DetailDoodad.h"
+#include "WoW/Source/Object/Movement.h"
 #include "WoW/Source/WorldClient/MapDoodadDef.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
@@ -2016,5 +2020,67 @@ namespace WarcraftXL::Binding {
             pivot->z = bone.m_pivot.z;
         }
         return WXL_TRUE;
+    }
+    // --- terrain.def: the map's ground, as wxl.terrain reads and reshapes it -----------------
+
+    wxl_bool WXL_CALL terrain_present(void) {
+        return World::QueryMapId() >= 0 && CMap::bActive && !CMap::bDungeon ? WXL_TRUE : WXL_FALSE;
+    }
+
+    void* WXL_CALL terrain_chunk(int32_t chunk_x, int32_t chunk_y) {
+        if (chunk_x < 0 || chunk_y < 0 || chunk_x >= 1024 || chunk_y >= 1024) {
+            return nullptr;
+        }
+        CMapArea* area = CMap::m_areaTable[64 * (chunk_y >> 4) + (chunk_x >> 4)];
+        if (!area || area->m_asyncObject) {
+            return nullptr;
+        }
+        return area->m_mapChunks[16 * (chunk_y & 15) + (chunk_x & 15)];
+    }
+
+    wxl_bool WXL_CALL terrain_chunk_view(void* chunk, wxl_core_terrain_chunk* out) {
+        const CMapChunk* map = static_cast<const CMapChunk*>(chunk);
+        if (!map || !out || !map->m_height || !map->m_normals) {
+            return WXL_FALSE;
+        }
+        out->chunk_x = map->m_cOffset.x;
+        out->chunk_y = map->m_cOffset.y;
+        out->heights = map->m_height;
+        out->normals = map->m_normals;
+        out->base_z  = map->m_topLeftCoords.z;
+        out->holes   = map->m_header ? map->m_header->m_holes : 0u;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL terrain_chunk_rebuild(void* chunk, wxl_bool doodads) {
+        CMapChunk* map = static_cast<CMapChunk*>(chunk);
+        if (!map) {
+            return;
+        }
+        map->CreateBounds();
+        if (CMapRenderChunk* render = map->m_renderChunk) {
+            C3Vector at = render->m_vec1;
+            if (render->m_mapChunks[0]) {
+                render->AddBatch(render->m_mapChunks[0], render->m_mapChunks[1], &at, render->m_unkFlags);
+            }
+            if (render->m_chunkBuf && render->m_chunkBuf->m_vertexBuf) {
+                render->m_chunkBuf->m_vertexBuf->m_hasData = 0;
+            }
+        }
+        if (doodads && map->m_detailDoodadInst) {
+            CDetailDoodad::FreeInst(map->m_detailDoodadInst);
+            map->m_detailDoodadInst = nullptr;
+        }
+    }
+
+    void WXL_CALL terrain_forget_collision(void) {
+        CMovement_C::ForgetFacetQuery();
+    }
+
+    void WXL_CALL unit_fall_local(const void* object) {
+        const CGUnit_C* unit = static_cast<const CGUnit_C*>(Object(object));
+        if (unit && unit->m_movement) {
+            unit->m_movement->OnFallLocal(OsGetAsyncTimeMs());
+        }
     }
 }

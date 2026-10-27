@@ -5918,6 +5918,7 @@ void CMap::RenderFootprints() {
 // VERIFY: 331b297f manual
 // OFFSET: 0x007C3830
 void CMap::Unload() {
+    wxl::seam::Map::Unload::Before();
     CMap::PurgeMaps();
     CMap::s_lowDetail.Unload();
 

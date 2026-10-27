@@ -237,6 +237,7 @@ CMapChunk* CMapArea::PrepareChunk(int32_t chunkX, int32_t chunkY) {
     chunk->m_sOffset.y = 8 * (chunkY + this->m_tileChunkIndex.y);
     chunk->Create(reinterpret_cast<SIffChunk*>(static_cast<uint8_t*>(this->m_fileBuffer) + this->m_chunkInfo[index].m_offset), firstUse);
 
+    wxl::seam::MapArea::PrepareChunk::After(chunk, this, chunkX, chunkY);
     return chunk;
 }
 

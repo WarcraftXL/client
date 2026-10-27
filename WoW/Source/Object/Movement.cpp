@@ -6973,3 +6973,9 @@ void CMovement_C::CollideWithTransport(uint32_t time, uint32_t elapsed, float di
     globals->m_transportTime2 = globals->m_transportTime;
     globals->m_transportTime = savedTime;
 }
+
+// WarcraftXL: a query box holding no point, so that ValidateTestVsFacetQuery asks the world again.
+void CMovement_C::ForgetFacetQuery() {
+    s_queryBox.b = C3Vector(3.4028235e38f, 3.4028235e38f, 3.4028235e38f);
+    s_queryBox.t = C3Vector(-3.4028235e38f, -3.4028235e38f, -3.4028235e38f);
+}

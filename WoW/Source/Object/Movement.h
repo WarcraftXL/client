@@ -57,6 +57,9 @@ class CPlayerMoveQueue : public TSList<CPlayerMoveEvent, TSGetExplicitLink<CPlay
 class CMovement_C : public CMovementShared {
     public:
     static void MoveUnits(uint32_t time, uint32_t lastUpdateTime);
+    // WarcraftXL: empties the facet query the moves reuse, so that the next one collects the
+    // ground's facets again (a mod reshaped the ground).
+    static void ForgetFacetQuery();
     static void WrapFacingToRange(float& facing, float min, float max);
 
     /* 00C4 */ uint32_t m_gameTime;
