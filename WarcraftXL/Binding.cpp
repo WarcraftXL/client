@@ -659,6 +659,19 @@ namespace WarcraftXL::Binding {
         return WXL_TRUE;
     }
 
+    void* WXL_CALL gx_texture_ready(void* texture) {
+        if (!g_theGxDevicePtr || !texture) {
+            return nullptr;
+        }
+        CGxTex* gx = static_cast<CTexture*>(texture)->m_gxTex;
+        if (!gx) {
+            return nullptr; // the file is still loading
+        }
+        // Made on the device and filled, as the engine does before binding it.
+        g_theGxDevicePtr->ITexMarkAsUpdated(gx);
+        return gx->m_needsCreation || !gx->m_apiSpecificData ? nullptr : gx;
+    }
+
     void* WXL_CALL gx_d3d9_device(void) {
         if (!g_theGxDevicePtr) {
             return nullptr;
