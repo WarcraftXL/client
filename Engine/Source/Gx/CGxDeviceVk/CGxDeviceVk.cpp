@@ -866,9 +866,21 @@ void CGxDeviceVk::Draw(CGxBatch* batch, int32_t count) {
         return;
     }
 
+    // What the runtime changes in the engine's state for this draw (wxl.terrain's layers), before
+    // it is flushed, and given back after.
+    const bool bracket = this->m_vk->struct_size >= offsetof(wxl_gx_vk_backend, draw_end) + sizeof(this->m_vk->draw_end) &&
+                         this->m_vk->draw_begin && this->m_vk->draw_end;
+    if (bracket) {
+        this->m_vk->draw_begin(this, reinterpret_cast<const wxl_gx_batch*>(batch), count);
+    }
+
     this->IShaderConstantsFlush();
     this->IRsSync(0);
     this->m_vk->draw(this, reinterpret_cast<const wxl_gx_batch*>(batch), count);
+
+    if (bracket) {
+        this->m_vk->draw_end(this, reinterpret_cast<const wxl_gx_batch*>(batch), count);
+    }
 
     if (count) {
         // The numbers of this draw in D3D9's terms, as the D3D9 device keeps them, which

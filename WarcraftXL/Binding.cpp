@@ -672,6 +672,66 @@ namespace WarcraftXL::Binding {
         return gx->m_needsCreation || !gx->m_apiSpecificData ? nullptr : gx;
     }
 
+    void WXL_CALL gx_vertex_constants_set(uint32_t first, const float* rows, uint32_t count) {
+        if (g_theGxDevicePtr && rows && count) {
+            GxShaderConstantsSet(GxSh_Vertex, first, rows, count);
+        }
+    }
+
+    wxl_bool WXL_CALL gx_xform_get(uint32_t xform, float* matrix) {
+        if (!g_theGxDevicePtr || !matrix || xform > GxXform_View) {
+            return WXL_FALSE;
+        }
+        const CGxMatrixStack& stack = g_theGxDevicePtr->m_xforms[xform];
+        const uint32_t level = stack.m_level > 3 ? 3 : stack.m_level;
+        std::memcpy(matrix, &stack.m_mtx[level], 16 * sizeof(float));
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL gx_xform_set(uint32_t xform, const float* matrix) {
+        if (g_theGxDevicePtr && matrix && xform <= GxXform_View) {
+            C44Matrix m;
+            std::memcpy(&m, matrix, sizeof m);
+            GxXformSet(static_cast<EGxXform>(xform), m);
+        }
+    }
+
+    wxl_bool WXL_CALL terrain_render_chunk(const void* chunk, wxl_core_render_chunk* out) {
+        if (!chunk || !out) {
+            return WXL_FALSE;
+        }
+        const CMapRenderChunk* c = static_cast<const CMapRenderChunk*>(chunk);
+        if (c->m_layersCount > 4) {
+            return WXL_FALSE;
+        }
+        *out = wxl_core_render_chunk{};
+        out->layers = c->m_layersCount;
+        out->render_flags = static_cast<uint16_t>(c->m_renderFlags);
+        for (uint32_t i = 0; i < out->layers; i++) {
+            out->layer_flags[i] = static_cast<uint16_t>(c->m_layers[i].m_flags);
+            out->layer_texture[i] = static_cast<uint32_t>(c->m_layers[i].m_textureId);
+        }
+        out->batch = &c->m_batch;
+        out->map_chunk = c->m_mapChunks[0];
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL terrain_area_file(const void* area, wxl_core_area_file* out) {
+        if (!area || !out) {
+            return WXL_FALSE;
+        }
+        const CMapArea* a = static_cast<const CMapArea*>(area);
+        out->tile_x = a->m_index.x;
+        out->tile_y = a->m_index.y;
+        out->data = a->m_fileBuffer;
+        out->size = static_cast<uint32_t>(a->m_fileSize);
+        return out->data && out->size ? WXL_TRUE : WXL_FALSE;
+    }
+
+    const float* WXL_CALL terrain_vertex_constants(void) {
+        return reinterpret_cast<const float*>(&CMapRenderChunk::s_vertexShaderConsts);
+    }
+
     void* WXL_CALL gx_d3d9_device(void) {
         if (!g_theGxDevicePtr) {
             return nullptr;
