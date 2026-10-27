@@ -792,6 +792,9 @@ namespace WarcraftXL::Binding {
         }
         out->path = CMap::wdtFilename;
         out->flags = &CMap::header.m_flags;
+        out->tiles = &CMap::m_areaInfo[0].m_flags;
+        out->map_path = CMap::mapPath;
+        out->map_name = CMap::mapName;
         return WXL_TRUE;
     }
 
