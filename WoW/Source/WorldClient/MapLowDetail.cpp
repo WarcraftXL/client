@@ -16,6 +16,7 @@
 #include "Engine/Source/Gx/Gx.h"
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "Engine/Source/Gx/CGxVertexPC.h"
+#include "WarcraftXL/Seams.h"
 
 // VERIFY: 3763adce auto
 // OFFSET: 0x007C06E0
@@ -118,6 +119,11 @@ void CMapLowDetail::CullHorizonAreas(const C3Vector* pos) {
 // VERIFY: ba76c774 manual
 // OFFSET: 0x007CC310
 void CMapLowDetail::Load(const char* mapPath, const char* mapName) {
+    void* self = this;
+    if (wxl::seam::MapLowDetail::Load::Gate(&self, &mapPath, &mapName)) {
+        return;
+    }
+
     char fileName[256];
     SFileImpl* file;
 

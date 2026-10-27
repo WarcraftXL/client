@@ -82,6 +82,8 @@
 #include "WoW/Source/WorldClient/MapArea.h"
 #include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
 #include "WoW/Source/WorldClient/MapChunk.h"
+#include "WoW/Source/WorldClient/MapLowDetail.h"
+#include "Engine/Source/Storm/H/storm.h"
 #include "WoW/Source/WorldClient/MapRenderChunk.h"
 #include "WoW/Source/WorldClient/DetailDoodad.h"
 #include "WoW/Source/Object/Movement.h"
@@ -844,6 +846,52 @@ namespace WarcraftXL::Binding {
         out->map_obj_names = a->m_wmoFileNames;
         out->model_offsets = a->m_modelFilenamesOffsets;
         out->map_obj_offsets = a->m_wmoFilenamesOffsets;
+        return WXL_TRUE;
+    }
+
+    void* WXL_CALL map_low_detail_set(void* detail, const void* bytes, uint32_t size, uint32_t area_offsets) {
+        if (!detail || !bytes || !size || area_offsets >= size) {
+            return nullptr;
+        }
+        CMapLowDetail* d = static_cast<CMapLowDetail*>(detail);
+        char* data = static_cast<char*>(SMemAlloc(size, __FILE__, __LINE__, 0));
+        if (!data) {
+            return nullptr;
+        }
+        memcpy(data, bytes, size);
+        d->m_data = data;
+        d->m_mapObjNames = nullptr;
+        d->m_mapObjNameOffsets = nullptr;
+        d->m_mapObjDefs = nullptr;
+        d->m_mapObjDefCount = 0;
+        d->m_areaOffsets = reinterpret_cast<uint32_t*>(data + area_offsets);
+        return data;
+    }
+
+    wxl_bool WXL_CALL map_area_low_add(void* detail, const wxl_core_area_low* a) {
+        if (!detail || !a || a->index >= 4096) {
+            return WXL_FALSE;
+        }
+        CMapLowDetail* d = static_cast<CMapLowDetail*>(detail);
+        if (!d->m_data) {
+            return WXL_FALSE;
+        }
+        CMapAreaLow* area = CMap::AllocAreaLow();
+        if (!area) {
+            return WXL_FALSE;
+        }
+        area->m_heights = reinterpret_cast<int16_t*>(d->m_data + a->heights);
+        area->m_holes = a->holes ? reinterpret_cast<uint16_t*>(d->m_data + a->holes) : nullptr;
+        area->m_indexCount = a->index_count;
+        area->m_index.x = a->column;
+        area->m_index.y = a->row;
+        area->m_topLeft.x = a->top_left[0];
+        area->m_topLeft.y = a->top_left[1];
+        area->m_bbox.b = C3Vector(a->box_min[0], a->box_min[1], a->box_min[2]);
+        area->m_bbox.t = C3Vector(a->box_max[0], a->box_max[1], a->box_max[2]);
+        area->m_sphere.c = C3Vector(a->center[0], a->center[1], a->center[2]);
+        area->m_sphere.r = a->radius;
+        d->m_areas[a->index] = area;
         return WXL_TRUE;
     }
 
