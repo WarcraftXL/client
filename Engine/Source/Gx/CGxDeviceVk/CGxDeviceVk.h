@@ -94,6 +94,9 @@ class CGxDeviceVk : public CGxDevice {
     // GxBonePaletteSet: the bones the next skinned draws read, in the place of the registers from c31.
     void BonePaletteSet(const C34Matrix* bones, uint32_t count);
 
+    // GxDraw32: a draw over the bound 32-bit index buffer, its vertex range in 32 bits.
+    void Draw32(CGxBatch32* batch, int32_t count);
+
     private:
     int32_t ICreateWindow(CGxFormat& format);
     void IDestroyVk();

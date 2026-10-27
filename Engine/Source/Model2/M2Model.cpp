@@ -2644,7 +2644,48 @@ void CM2Model::AnimateST() {
 int32_t CM2Model::SetIndices() {
     CGxBuf* buf = this->m_optGeo->m_indexBuf;
 
-    if (!buf->m_hasData || !buf->m_valid) {
+    if ((!buf->m_hasData || !buf->m_valid) && buf->m_pool->m_target == GxPoolTarget_Index32) {
+        // Not in the original: the same indices, 32 bits each.
+        uint32_t* indices = reinterpret_cast<uint32_t*>(g_theGxDevicePtr->BufLock(buf));
+
+        if (!indices) {
+            return 0;
+        }
+
+        CM2Shared* shared = this->m_shared;
+        M2SkinProfile* skin = shared->m_skinData;
+        uint32_t copyIndices = shared->m_cache->m_flags & 8;
+        int32_t singleBone = shared->m_data->m_bones.m_count == 1 && (shared->m_cache->m_flags & 0x40);
+
+        for (uint32_t i = 0; i < this->m_optGeo->m_skinSectionCount; i++) {
+            M2BatchRange* range = &this->m_optGeo->m_batchRanges[this->m_optGeo->m_skinSections[i].m_skinSectionId & 0xFFFF];
+            uint32_t vertexBase = 0;
+
+            for (uint32_t b = range->m_first; b <= range->m_last; b++) {
+                uint16_t sectionIndex = skin->m_batches[b].m_skinSectionIndex;
+
+                if (!this->m_skinSections[sectionIndex]) {
+                    continue;
+                }
+
+                M2SkinSection* section = &skin->m_skinSections[sectionIndex];
+                uint32_t start = M2SkinSectionIndexStart(*skin, *section);
+
+                for (uint32_t j = 0; j < section->m_indexCount; j++) {
+                    indices[j] = copyIndices || singleBone ? skin->m_indices[j + start] : vertexBase + skin->m_indices[j + start] - section->m_vertexStart;
+                }
+
+                vertexBase += section->m_vertexCount;
+                indices += section->m_indexCount;
+            }
+        }
+
+        buf = this->m_optGeo->m_indexBuf;
+        g_theGxDevicePtr->BufUnlock(buf, 0);
+        buf->m_hasData = 1;
+    }
+
+    if ((!buf->m_hasData || !buf->m_valid) && buf->m_pool->m_target != GxPoolTarget_Index32) {
         uint16_t* indices = reinterpret_cast<uint16_t*>(g_theGxDevicePtr->BufLock(buf));
 
         if (!indices) {
@@ -2897,9 +2938,7 @@ void CM2Model::RenderModelBatchesForProjectedTexture() {
             gxBatch.m_primType = GxPrim_Triangles;
             gxBatch.m_start = M2SkinSectionDrawStart(*section);
             gxBatch.m_count = section->m_indexCount;
-            gxBatch.m_minIndex = 0;
-            gxBatch.m_maxIndex = this->m_shared->m_skinData->m_vertices.m_count - 1;
-            g_theGxDevicePtr->Draw(&gxBatch, 1);
+            GxDrawIndexRange(&gxBatch, 0, this->m_shared->m_skinData->m_vertices.m_count - 1);
         }
     }
 }
@@ -2997,8 +3036,7 @@ void CM2Model::RenderBatchShadowMap(int32_t untextured, M2Batch* batch, const CM
         }
 
         gxBatch.m_count = instances * section->m_indexCount;
-        gxBatch.m_maxIndex = static_cast<uint16_t>(instances * this->m_shared->m_skinData->m_vertices.m_count - 1);
-        g_theGxDevicePtr->Draw(&gxBatch, 1);
+        GxDrawIndexRange(&gxBatch, 0, instances * this->m_shared->m_skinData->m_vertices.m_count - 1);
     }
 }
 
@@ -4284,8 +4322,12 @@ void CM2Model::OptimizeVisibleGeometry() {
         optGeo->m_effects[i] = this->m_shared->GetEffect(&optGeo->m_batches[i]);
     }
 
-    optGeo->m_indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Static, sizeof(uint16_t) * indexCount, GxPoolHintBit_Unk0, this->m_shared->m_fileNameWithoutPath);
-    optGeo->m_indexBuf = g_theGxDevicePtr->BufCreate(optGeo->m_indexPool, sizeof(uint16_t), indexCount, 0);
+    // Not in the original: a skin over 65535 indices (or vertices) goes into a pool of 32-bit
+    // indices, where the device has one.
+    int32_t wide = g_theGxDevicePtr->Caps().Index32() && (indexCount > 0xFFFF || this->m_shared->m_skinData->m_vertices.m_count > 0x10000);
+    uint32_t itemSize = wide ? sizeof(uint32_t) : sizeof(uint16_t);
+    optGeo->m_indexPool = g_theGxDevicePtr->PoolCreate(wide ? GxPoolTarget_Index32 : GxPoolTarget_Index, GxPoolUsage_Static, itemSize * indexCount, GxPoolHintBit_Unk0, this->m_shared->m_fileNameWithoutPath);
+    optGeo->m_indexBuf = g_theGxDevicePtr->BufCreate(optGeo->m_indexPool, itemSize, indexCount, 0);
 
     if (!optGeo->m_indexPool || !optGeo->m_indexBuf) {
         this->UnoptimizeVisibleGeometry();

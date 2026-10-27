@@ -884,9 +884,21 @@ void CGxDeviceVk::Draw(CGxBatch* batch, int32_t count) {
         g_gxLastIndexedDraw.baseVertex = static_cast<int32_t>(baseVertexIndex);
         g_gxLastIndexedDraw.minIndex = batch->m_minIndex;
         g_gxLastIndexedDraw.vertexCount = batch->m_maxIndex - batch->m_minIndex + 1;
-        g_gxLastIndexedDraw.startIndex = batch->m_start + (this->m_primIndexBuf ? (this->m_primIndexBuf->m_index >> 1) : 0);
+        // m_index is in bytes: two an index, four in a 32-bit index pool.
+        uint32_t indexShift = this->m_primIndexBuf && this->m_primIndexBuf->m_pool->m_target == GxPoolTarget_Index32 ? 2 : 1;
+        g_gxLastIndexedDraw.startIndex = batch->m_start + (this->m_primIndexBuf ? (this->m_primIndexBuf->m_index >> indexShift) : 0);
         g_gxLastIndexedDraw.primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
         g_gxLastIndexedDraw.serial++;
+    }
+}
+
+void CGxDeviceVk::Draw32(CGxBatch32* batch, int32_t count) {
+    uint32_t serial = g_gxLastIndexedDraw.serial;
+    this->Draw(batch, count);
+
+    if (count && g_gxLastIndexedDraw.serial != serial) {
+        g_gxLastIndexedDraw.minIndex = batch->m_minIndex32;
+        g_gxLastIndexedDraw.vertexCount = batch->m_maxIndex32 - batch->m_minIndex32 + 1;
     }
 }
 
@@ -993,7 +1005,7 @@ char* CGxDeviceVk::IBufLock(CGxBuf* buf) {
     CGxPool* pool = buf->m_pool;
 
     if (!this->m_context || !this->m_vkMade) {
-        return static_cast<char*>(this->m_emergencyMem[pool->m_target].Lock(buf->m_size));
+        return static_cast<char*>(this->m_emergencyMem[GxPoolSlot(pool->m_target)].Lock(buf->m_size));
     }
 
     if (pool->m_usage == GxPoolUsage_Stream) {
@@ -1014,14 +1026,14 @@ char* CGxDeviceVk::IBufLock(CGxBuf* buf) {
     char* base = this->m_vk->pool_memory(this, pool);
 
     if (!base || buf->m_index + buf->m_size > static_cast<uint32_t>(pool->m_size)) {
-        return static_cast<char*>(this->m_emergencyMem[pool->m_target].Lock(buf->m_size));
+        return static_cast<char*>(this->m_emergencyMem[GxPoolSlot(pool->m_target)].Lock(buf->m_size));
     }
 
     return base + buf->m_index;
 }
 
 void CGxDeviceVk::IBufUnlock(CGxBuf* buf) {
-    EmergencyMem& emergencyMem = this->m_emergencyMem[buf->m_pool->m_target];
+    EmergencyMem& emergencyMem = this->m_emergencyMem[GxPoolSlot(buf->m_pool->m_target)];
 
     if (emergencyMem.m_lock) {
         emergencyMem.Unlock();

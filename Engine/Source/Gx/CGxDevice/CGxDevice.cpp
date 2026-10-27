@@ -201,14 +201,14 @@ void CGxDevice::BufData(CGxBuf* buf, const void* data, uint32_t size, uint32_t o
 char* CGxDevice::BufLock(CGxBuf* buf) {
     buf->m_dirty = 1;
     buf->unk_001F = 0;
-    this->m_bufLocked[buf->m_pool->m_target] = buf;
+    this->m_bufLocked[GxPoolSlot(buf->m_pool->m_target)] = buf;
     return nullptr;
 }
 
 // VERIFY: da5b4d82 auto
 // OFFSET: 0x00683180
 int32_t CGxDevice::BufUnlock(CGxBuf* buf, uint32_t size) {
-    this->m_bufLocked[buf->m_pool->m_target] = nullptr;
+    this->m_bufLocked[GxPoolSlot(buf->m_pool->m_target)] = nullptr;
     return 1;
 }
 
@@ -1030,6 +1030,11 @@ void CGxDevice::LightSet(uint32_t index, const CGxLight& light, const C3Vector& 
 // VERIFY: 97a9c89d manual
 // OFFSET: 0x00684850
 CGxBuf* CGxDevice::BufStream(EGxPoolTarget target, uint32_t itemSize, uint32_t itemCount) {
+    // A 32-bit index pool has no stream buffer: null, which no buffer of it is.
+    if (target >= GxPoolTargets_Last) {
+        return nullptr;
+    }
+
     CGxBuf* buf = this->m_streamBufs[target];
     CGxPool* pool = buf->m_pool;
 

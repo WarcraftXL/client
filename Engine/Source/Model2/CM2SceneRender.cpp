@@ -476,27 +476,21 @@ void CM2SceneRender::DrawBatch() {
     batch.m_count = this->m_curSkinSection->m_indexCount;
 
     if (CShaderEffect::s_enableShaders) {
-        batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
-        batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
-        g_theGxDevicePtr->Draw(&batch, 1);
+        GxDrawIndexRange(&batch, this->m_curSkinSection->m_vertexStart, this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1);
     } else if (sharedVertices) {
         CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
         world.m_dirty = 1;
         world.m_flags[world.m_level] &= ~CGxMatrixStack::F_Identity;
         world.m_mtx[world.m_level] = this->m_curModel->m_boneMatrices[0];
 
-        batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
-        batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
-        g_theGxDevicePtr->Draw(&batch, 1);
+        GxDrawIndexRange(&batch, this->m_curSkinSection->m_vertexStart, this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1);
 
         CGxMatrixStack& restore = g_theGxDevicePtr->m_xforms[GxXform_World];
         restore.m_dirty = 1;
         restore.m_flags[restore.m_level] &= ~CGxMatrixStack::F_Identity;
         restore.m_mtx[restore.m_level] = s_identity;
     } else {
-        batch.m_minIndex = 0;
-        batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
-        g_theGxDevicePtr->Draw(&batch, 1);
+        GxDrawIndexRange(&batch, 0, this->m_curSkinSection->m_vertexCount - 1);
     }
 
     if (wxl::seam::Listening(WXL_EV_ModelBatchDrawn)) {
@@ -648,8 +642,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
                 CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
 
                 batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-                batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
-                g_theGxDevicePtr->Draw(&batch, 1);
+                GxDrawIndexRange(&batch, 0, instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
                 continue;
             }
 
@@ -682,8 +675,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-            batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
-            g_theGxDevicePtr->Draw(&batch, 1);
+            GxDrawIndexRange(&batch, 0, instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
         }
     } else {
         for (uint32_t done = 0; done < total; done += instances) {
@@ -719,8 +711,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             GxRsSet(GxRs_NormalizeNormals, normalize);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-            batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curSkinSection->m_vertexCount - 1);
-            g_theGxDevicePtr->Draw(&batch, 1);
+            GxDrawIndexRange(&batch, 0, instances * this->m_curSkinSection->m_vertexCount - 1);
         }
     }
 }

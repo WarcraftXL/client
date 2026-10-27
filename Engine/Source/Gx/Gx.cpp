@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include "Engine/Source/Gx/Buffer.h"
+#include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -307,6 +308,39 @@ void GxBonePaletteSet(const C34Matrix* bones, uint32_t count) {
         static_cast<CGxDeviceVk*>(g_theGxDevicePtr)->BonePaletteSet(bones, count);
     }
 #endif
+}
+
+// Not in the original: a vertex range in 32 bits over a 32-bit index buffer, as CGxBatch holds it otherwise.
+void GxDrawIndexRange(CGxBatch* batch, uint32_t minIndex, uint32_t maxIndex) {
+    CGxBuf* indices = g_theGxDevicePtr->m_primIndexBuf;
+
+    if (indices && indices->m_pool && indices->m_pool->m_target == GxPoolTarget_Index32) {
+        CGxBatch32 wide;
+        wide.m_primType = batch->m_primType;
+        wide.m_start = batch->m_start;
+        wide.m_count = batch->m_count;
+        wide.m_minIndex = static_cast<uint16_t>(minIndex);
+        wide.m_maxIndex = static_cast<uint16_t>(maxIndex);
+        wide.m_minIndex32 = minIndex;
+        wide.m_maxIndex32 = maxIndex;
+        GxDraw32(&wide, 1);
+        return;
+    }
+
+    batch->m_minIndex = static_cast<uint16_t>(minIndex);
+    batch->m_maxIndex = static_cast<uint16_t>(maxIndex);
+    g_theGxDevicePtr->Draw(batch, 1);
+}
+
+// Not in the original: so do 32-bit index pools.
+void GxDraw32(CGxBatch32* batch, int32_t count) {
+#if defined(WOWDECOMP_ARCH_64)
+    if (g_theGxDevicePtr->m_api == GxApi_Vulkan) {
+        static_cast<CGxDeviceVk*>(g_theGxDevicePtr)->Draw32(batch, count);
+        return;
+    }
+#endif
+    g_theGxDevicePtr->Draw(batch, count);
 }
 
 // VERIFY: 2d7b5b76 manual

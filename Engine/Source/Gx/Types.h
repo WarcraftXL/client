@@ -211,6 +211,14 @@ class CGxBatch {
     /* 000E */ uint16_t m_maxIndex;
 };
 
+// Not in the original: a batch over 32-bit indices (GxPoolTarget_Index32, GxDraw32), its vertex
+// range wider than CGxBatch's 16 bits. A device reads its CGxBatch part as any batch's.
+class CGxBatch32 : public CGxBatch {
+    public:
+    uint32_t m_minIndex32;
+    uint32_t m_maxIndex32;
+};
+
 enum EGxColorFormat {
     GxCF_argb = 0,
     GxCF_rgba = 1,
@@ -263,6 +271,11 @@ class CGxCaps {
     uint32_t BonePalette() const {
         return this->unused_0114[0];
     }
+
+    // Whether index pools of 32-bit indices exist (GxPoolTarget_Index32).
+    int32_t Index32() const {
+        return this->unused_0114[1] != 0;
+    }
 };
 
 class CGxQuery {
@@ -284,7 +297,16 @@ enum EGxPoolTarget {
     GxPoolTarget_Vertex = 0,
     GxPoolTarget_Index = 1,
     GxPoolTargets_Last = 2,
+    // Not in the original: an index pool of 32-bit indices, where the caps offer it
+    // (CGxCaps::Index32). It has no stream buffer of its own; the device's arrays by target
+    // (m_bufLocked, m_emergencyMem) take it in the index pool's place (GxPoolSlot).
+    GxPoolTarget_Index32 = 2,
 };
+
+// The place of a pool target in the device's arrays by target: an index pool's for both widths.
+inline uint32_t GxPoolSlot(EGxPoolTarget target) {
+    return target == GxPoolTarget_Vertex ? 0 : 1;
+}
 
 enum EGxPoolUsage {
     GxPoolUsage_Static = 0,
