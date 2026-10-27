@@ -638,6 +638,27 @@ namespace WarcraftXL::Binding {
         return g_theGxDevicePtr ? static_cast<int32_t>(g_theGxDevicePtr->DeviceApi()) : -1;
     }
 
+    wxl_bool WXL_CALL gx_world_view(wxl_core_world_view* out) {
+        if (!g_theGxDevicePtr || !out) {
+            return WXL_FALSE;
+        }
+        const CGxMatrixStack& view = g_theGxDevicePtr->m_xforms[GxXform_View];
+        const uint32_t level = view.m_level > 3 ? 3 : view.m_level;
+        std::memcpy(out->projection, &g_theGxDevicePtr->m_projNative, sizeof out->projection);
+        std::memcpy(out->view, &view.m_mtx[level], sizeof out->view);
+        const CBoundingBox& box = g_theGxDevicePtr->m_viewport;
+        out->viewport[0] = box.m_x.m_l;
+        out->viewport[1] = box.m_x.m_h;
+        out->viewport[2] = box.m_y.m_l;
+        out->viewport[3] = box.m_y.m_h;
+        out->viewport[4] = box.m_z.m_l;
+        out->viewport[5] = box.m_z.m_h;
+        out->window[0] = g_theGxDevicePtr->m_curWindowRect.maxX;
+        out->window[1] = g_theGxDevicePtr->m_curWindowRect.maxY;
+        out->eye = wxl_vec3{CWorldScene::s_activeWorldView.x, CWorldScene::s_activeWorldView.y, CWorldScene::s_activeWorldView.z};
+        return WXL_TRUE;
+    }
+
     void* WXL_CALL gx_d3d9_device(void) {
         if (!g_theGxDevicePtr) {
             return nullptr;
