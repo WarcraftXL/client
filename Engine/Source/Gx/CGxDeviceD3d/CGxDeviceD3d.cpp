@@ -14,6 +14,7 @@
 #include "ThirdParty/nvapi/nvapi.h"
 #include "Engine/Source/ShaderEffect/Types.h"
 #include "GameVersion.h"
+#include "WarcraftXL/GxCapture.h"
 #include "WarcraftXL/Seams.h"
 
 typedef IDirect3D9* (WINAPI* Direct3DCreate9Proc)(UINT sdkVersion);
@@ -95,6 +96,7 @@ static int32_t s_isIdent;
 // VERIFY: 271a03c4 manual
 // OFFSET: 0x0068FA60
 void CGxDeviceD3d::IBufUnlock(CGxBuf* buf) {
+    WXL_GX_CAPTURE(Unlocking(buf));
     CGxPool* pool = buf->m_pool;
     EmergencyMem& emergencyMem = this->m_emergencyMem[pool->m_target];
 
@@ -204,6 +206,7 @@ char* CGxDeviceD3d::IBufLock(CGxBuf* buf) {
         return static_cast<char*>(this->m_emergencyMem[pool->m_target].Lock(buf->m_size));
     }
 
+    WXL_GX_CAPTURE(Locked(buf, data));
     return data;
 }
 
@@ -811,9 +814,12 @@ void CGxDeviceD3d::XformSetView(const C44Matrix& matrix) {
 // VERIFY: 4be0f29d auto
 // OFFSET: 0x006AA070
 void CGxDeviceD3d::IShaderCreatePixel(CGxShader* shader) {
+    wxl::seam::Gx::D3dIShaderCreatePixel::Before(this, shader);
+
     shader->m_valid = 0;
 
     if (!this->m_context) {
+        wxl::seam::Gx::D3dIShaderCreatePixel::After(this, shader);
         return;
     }
 
@@ -825,14 +831,19 @@ void CGxDeviceD3d::IShaderCreatePixel(CGxShader* shader) {
         shader->m_apiSpecific = pixelShader;
         shader->m_valid = 1;
     }
+
+    wxl::seam::Gx::D3dIShaderCreatePixel::After(this, shader);
 }
 
 // VERIFY: 42b1d4b6 auto
 // OFFSET: 0x006AA0D0
 void CGxDeviceD3d::IShaderCreateVertex(CGxShader* shader) {
+    wxl::seam::Gx::D3dIShaderCreateVertex::Before(this, shader);
+
     shader->m_valid = 0;
 
     if (!this->m_context) {
+        wxl::seam::Gx::D3dIShaderCreateVertex::After(this, shader);
         return;
     }
 
@@ -844,6 +855,8 @@ void CGxDeviceD3d::IShaderCreateVertex(CGxShader* shader) {
         shader->m_apiSpecific = vertexShader;
         shader->m_valid = 1;
     }
+
+    wxl::seam::Gx::D3dIShaderCreateVertex::After(this, shader);
 }
 
 // VERIFY: 38fa5626 manual
@@ -2174,6 +2187,7 @@ void CGxDeviceD3d::IShaderConstantsFlush() {
 
     if (vs.dirtyMin <= vs.dirtyMax) {
         this->m_d3dDevice->SetVertexShaderConstantF(vs.dirtyMin, &vs.constants[vs.dirtyMin * 4], vs.dirtyMax - vs.dirtyMin + 1);
+        WXL_GX_CAPTURE(Flush(0, vs.dirtyMin, vs.dirtyMax - vs.dirtyMin + 1, &vs.constants[vs.dirtyMin * 4]));
     }
 
     vs.dirtyMin = 255;
@@ -2183,6 +2197,7 @@ void CGxDeviceD3d::IShaderConstantsFlush() {
 
     if (ps.dirtyMin <= ps.dirtyMax) {
         this->m_d3dDevice->SetPixelShaderConstantF(ps.dirtyMin, &ps.constants[ps.dirtyMin * 4], ps.dirtyMax - ps.dirtyMin + 1);
+        WXL_GX_CAPTURE(Flush(1, ps.dirtyMin, ps.dirtyMax - ps.dirtyMin + 1, &ps.constants[ps.dirtyMin * 4]));
     }
 
     ps.dirtyMax = 0;
@@ -3198,6 +3213,7 @@ void CGxDeviceD3d::ITexMarkAsUpdated(CGxTex* texId) {
             this->ITexUpload(texId);
         }
 
+        WXL_GX_CAPTURE(TexUpdated(texId));
         CGxDevice::ITexMarkAsUpdated(texId);
     }
 }
@@ -3232,6 +3248,8 @@ void CGxDeviceD3d::ISceneBegin() {
     if (this->m_d3dDevice->BeginScene() == D3D_OK) {
         this->m_inScene = 1;
     }
+
+    WXL_GX_CAPTURE(SceneBegin(this));
 }
 
 // VERIFY: 677ac69d manual
@@ -3273,6 +3291,7 @@ void CGxDeviceD3d::ScenePresent() {
             this->DeviceScreenShot();
         }
 
+        WXL_GX_CAPTURE(Present(this));
         this->WaitForFPSCap();
 
         if (FAILED(this->m_d3dDevice->Present(nullptr, nullptr, nullptr, nullptr))) {
@@ -3296,9 +3315,14 @@ void CGxDeviceD3d::ScenePresent() {
 // VERIFY: ada703ca manual
 // OFFSET: 0x006A3620
 void CGxDeviceD3d::Draw(CGxBatch* batch, int32_t count) {
+    wxl::seam::Gx::D3dDraw::Before(this, batch, count);
+
     if (!this->m_context || this->m_intF5C) {
+        wxl::seam::Gx::D3dDraw::After(this, batch, count);
         return;
     }
+
+    WXL_GX_CAPTURE(Draw(this, batch, count));
 
     this->IStateSync();
 
@@ -3324,6 +3348,8 @@ void CGxDeviceD3d::Draw(CGxBatch* batch, int32_t count) {
         uint32_t primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
         this->m_d3dDevice->DrawPrimitive(s_primitiveConversion[batch->m_primType], baseVertexIndex, primCount);
     }
+
+    wxl::seam::Gx::D3dDraw::After(this, batch, count);
 }
 
 // VERIFY: 3259f92c auto
@@ -3429,6 +3455,7 @@ void CGxDeviceD3d::SceneClear(uint32_t mask, CImVector color) {
     }
 
     this->m_d3dDevice->Clear(0, nullptr, flags, D3DCOLOR_ARGB(color.a, color.r, color.g, color.b), 1.0f, 0);
+    WXL_GX_CAPTURE(Clear(this, mask, D3DCOLOR_ARGB(color.a, color.r, color.g, color.b)));
 }
 
 // VERIFY: 9a01b076 auto
@@ -3764,6 +3791,7 @@ void CGxDeviceD3d::DeviceSetRenderTarget(EGxBuffer buffer, CGxTex* texture, uint
 
     this->m_viewportDirty = 1;
     this->m_scissorRectDirty = 1;
+    WXL_GX_CAPTURE(Target(this, buffer, texture, plane));
 }
 
 // VERIFY: 312f9bf5 auto
@@ -3968,6 +3996,8 @@ int32_t CGxDeviceD3d::TexCopy(CGxTex* dest, const C2iVector& destPos, const C2iV
         return 0;
     }
 
+    WXL_GX_CAPTURE(Copy(this, dest, destPos, sourcePos, size, level, plane));
+
     if (dest->m_needsCreation || (!dest->m_apiSpecificData && !dest->m_apiSpecificData2)) {
         this->ITexCreate(dest);
     }
@@ -4002,6 +4032,8 @@ int32_t CGxDeviceD3d::TexStretch(CGxTex* dest, const CiRect* destRect, const CiR
     if (!this->m_context) {
         return 0;
     }
+
+    WXL_GX_CAPTURE(Stretch(this, dest, destRect, sourceRect, level, face));
 
     if (dest->m_needsCreation || (!dest->m_apiSpecificData && !dest->m_apiSpecificData2)) {
         this->ITexCreate(dest);

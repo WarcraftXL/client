@@ -961,7 +961,9 @@ bool System_SFile2::FindFile(const char* name, char* path, uint32_t size, uint32
     }
 
     if (s_useOldFindFile || (name[0] == '\\' && name[1] == '\\') || name[1] == ':') {
-        return OldFindFile(name, path, size, flags, type);
+        const bool old = OldFindFile(name, path, size, flags, type);
+        wxl::seam::Storage::FindFileResult::After(old ? 1 : 0, name, path, size, flags, wxlType, wxlArchive);
+        return old;
     }
 
     if (flags & 3) {
@@ -1002,6 +1004,7 @@ bool System_SFile2::FindFile(const char* name, char* path, uint32_t size, uint32
         Blizzard::Lock::MutexLeave(s_fileHashLock.m_mutex);
 
         if (found) {
+            wxl::seam::Storage::FindFileResult::After(1, name, path, size, flags, wxlType, wxlArchive);
             return true;
         }
     }
@@ -1020,9 +1023,11 @@ bool System_SFile2::FindFile(const char* name, char* path, uint32_t size, uint32
         Blizzard::String::Copy(path, name, size);
         *type = SFILE_OLD_SFILE;
 
+        wxl::seam::Storage::FindFileResult::After(1, name, path, size, flags, wxlType, wxlArchive);
         return true;
     }
 
+    wxl::seam::Storage::FindFileResult::After(0, name, path, size, flags, wxlType, wxlArchive);
     return false;
 }
 

@@ -103,6 +103,48 @@ static uint32_t s_asyncLoadBufferUsed;
 // models ship them) loads whole instead of overrunning it.
 static const uint32_t s_maxImageSize = 2048;
 
+// On the Vulkan device, the largest mip a texture loads at, within the device's own maximum
+// (its caps' m_texMaxSize): the scratch grows to the image it decodes (s_mipBitsBytes), in the
+// pixel format of that image.
+static const uint32_t s_maxImageSizeVulkan = 16384;
+
+// The bytes the decode scratch holds now.
+static uint32_t s_mipBitsBytes;
+
+// The bytes of texture files read at once (the async read budget): 4 MB, or on the Vulkan device
+// enough for a 4096 texture's file with its mips.
+static const uint32_t s_asyncReadBudget = 0x400000;
+static const uint32_t s_asyncReadBudgetVulkan = 0x2000000;
+
+static uint32_t MaxImageSize() {
+    return g_theGxDevicePtr && g_theGxDevicePtr->m_api == GxApi_Vulkan ? s_maxImageSizeVulkan : s_maxImageSize;
+}
+
+static uint32_t AsyncReadBudget() {
+    return g_theGxDevicePtr && g_theGxDevicePtr->m_api == GxApi_Vulkan ? s_asyncReadBudgetVulkan : s_asyncReadBudget;
+}
+
+// The decode scratch made large enough for an image of @p width x @p height in @p format; 0 when
+// it cannot be (the previous scratch stays).
+static int32_t MipScratchHolds(PIXEL_FORMAT format, uint32_t width, uint32_t height) {
+    uint32_t bytes = MippedImgCalcSize(format, width, height);
+
+    if (bytes <= s_mipBitsBytes) {
+        return 1;
+    }
+
+    MipBits* grown = static_cast<MipBits*>(SMemAlloc(bytes, __FILE__, __LINE__, 0));
+
+    if (!grown) {
+        return 0;
+    }
+
+    SMemFree(s_mipBits, __FILE__, __LINE__, 0);
+    s_mipBits = grown;
+    s_mipBitsBytes = bytes;
+    return 1;
+}
+
 // STATIC: 0x00B49CA4
 static TSHashTableReuse<CTexture, HASHKEY_TEXTUREFILE> s_textureCache;
 
@@ -624,8 +666,8 @@ void RequestImageDimensions(uint32_t* width, uint32_t* height, uint32_t* bestMip
     CGxCaps caps = g_theGxDevicePtr->Caps();
     uint32_t maxSize = caps.m_texMaxSize[0];
 
-    if (maxSize > s_maxImageSize) {
-        maxSize = s_maxImageSize;
+    if (maxSize > MaxImageSize()) {
+        maxSize = MaxImageSize();
     }
 
     if (!maxSize) {
@@ -723,6 +765,10 @@ int32_t TextureLoadBlpMips(char* fileName, char* extension, int32_t flags, MipBi
 
     if (pixelFormat) {
         *pixelFormat = pixels;
+    }
+
+    if (images == &s_mipBits && !MipScratchHolds(pixels, imageWidth, imageHeight)) {
+        return 0;
     }
 
     if (!image.LockChain(pixels, *images, bestMip)) {
@@ -1214,12 +1260,13 @@ void FillInSolidTexture(const CImVector& color, CTexture* texture) {
     SStrCopy(texture->m_filename, "SolidTexture", 260);
 }
 
-// Whether a texture file of `size` bytes may be read now, with `available` bytes of the 4 MB read
-// budget left. The budget's counter is given back on more paths than it is taken on and wraps,
-// which reads as room. A file larger than the whole budget (a 2048 DXT5 BLP is 5.6 MB) asks for
-// the whole budget, so it is read once nothing else is, instead of never.
+// Whether a texture file of `size` bytes may be read now, with `available` bytes of the read
+// budget (AsyncReadBudget) left. The budget's counter is given back on more paths than it is taken
+// on and wraps, which reads as room. A file larger than the whole budget (a 2048 DXT5 BLP is 5.6 MB)
+// asks for the whole budget, so it is read once nothing else is, instead of never.
 static bool AsyncTextureFits(uint32_t size, uint32_t available) {
-    return available >= (size < 0x400000 ? size : 0x400000);
+    uint32_t budget = AsyncReadBudget();
+    return available >= (size < budget ? size : budget);
 }
 
 // What is left of `available` once a file of `size` bytes was read: nothing, after a file that
@@ -1231,7 +1278,7 @@ static uint32_t AsyncTextureLeft(uint32_t size, uint32_t available) {
 // VERIFY: f77dd4dd manual
 // OFFSET: 0x004B69E0
 void AsyncTextureHandler() {
-    uint32_t available = 0x400000 - s_asyncLoadBufferUsed;
+    uint32_t available = AsyncReadBudget() - s_asyncLoadBufferUsed;
 
     for (CAsyncObject* object = s_asyncLoadList.Head(); !s_asyncLoadList.IsEnd(object); ) {
         CAsyncObject* next = s_asyncLoadList.RawNext(object);
@@ -1666,6 +1713,11 @@ int32_t LoadTgaMips(char* fileName, char* extension, int32_t flags, MipBits** im
     uint32_t imageHeight = image.Height();
     uint32_t mipCount = TextureCalcMipCount(imageWidth, imageHeight);
 
+    // Not in the original: the shared decode scratch grows to an image larger than it holds.
+    if (images == &s_mipBits && !MipScratchHolds(PIXEL_ARGB8888, imageWidth, imageHeight)) {
+        return 0;
+    }
+
     if (*images) {
         MippedImgSet(PIXEL_ARGB8888, imageWidth, imageHeight, *images);
     } else {
@@ -1918,7 +1970,8 @@ int32_t AsyncTextureStatus() {
 // VERIFY: f4a9a3e6 manual
 // OFFSET: 0x004B7F80
 void TextureInitialize() {
-    s_mipBits = static_cast<MipBits*>(SMemAlloc(MippedImgCalcSize(PIXEL_ARGB8888, s_maxImageSize, s_maxImageSize), __FILE__, __LINE__, 0));
+    s_mipBitsBytes = MippedImgCalcSize(PIXEL_ARGB8888, s_maxImageSize, s_maxImageSize);
+    s_mipBits = static_cast<MipBits*>(SMemAlloc(s_mipBitsBytes, __FILE__, __LINE__, 0));
     AsyncFileReadAddPollHandler(AsyncTextureHandler);
     AsyncFileReadAddStatusHandler(AsyncTextureStatus);
     s_currentTime = OsGetAsyncTimeMs();
@@ -2270,7 +2323,7 @@ CTexture* CreateBlpAsync(char* extension, const char* fileName, uint32_t flags, 
 
     CAsyncObject* object = texture->m_asyncObject;
 
-    if (!AsyncTextureFits(object->m_size, 0x400000 - s_asyncLoadBufferUsed)) {
+    if (!AsyncTextureFits(object->m_size, AsyncReadBudget() - s_asyncLoadBufferUsed)) {
         s_asyncTextureList.LinkNode(object, 2, nullptr);
     } else {
         AsyncTextureProcess(object, 0);
@@ -2571,4 +2624,84 @@ CTexture* TextureCreate(const char* fileName, CGxTexFlags texFlags, CStatus* sta
     TextureReportLoadError("texture", fileName, status);
 
     return TextureCreateSolid(*reinterpret_cast<const CImVector*>(&s_defaultColor));
+}
+
+// The textures WarcraftXL reads again in place so a file that changed shows (WarcraftXL/Binding.cpp,
+// texture_reload): every one of the list whose name is `name` (no extension, any case), its pixels
+// and device texture made again from `name`.blp by PumpBlpTextureAsync as CreateBlpSync makes
+// them. One still loading is left alone and counted in `busy`, one held in a block of the
+// interface's atlas counted in `atlas`.
+uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy, uint32_t* atlas) {
+    if (busy) {
+        *busy = 0;
+    }
+
+    if (atlas) {
+        *atlas = 0;
+    }
+
+    if (!name || !*name) {
+        return 0;
+    }
+
+    char path[260];
+    SStrPrintf(path, sizeof(path), "%s.blp", name);
+
+    uint32_t reloaded = 0;
+    SFileImpl* file = nullptr;
+    void* data = nullptr;
+    bool tried = false;
+
+    for (CTexture* texture = s_textureList.Head(); !s_textureList.IsEnd(texture); texture = s_textureList.RawNext(texture)) {
+        if (SStrCmpI(texture->m_filename, name, STORM_MAX_STR) && SStrCmpI(texture->m_filename, path, STORM_MAX_STR)) {
+            continue;
+        }
+
+        if (texture->m_asyncObject) {
+            if (busy) {
+                (*busy)++;
+            }
+
+            continue;
+        }
+
+        // A block of the interface's atlas is not a texture of its own: nothing to read again in place.
+        if (texture->m_atlas) {
+            if (atlas) {
+                (*atlas)++;
+            }
+
+            continue;
+        }
+
+        if (!tried) {
+            tried = true;
+
+            if (SFile::OpenEx(nullptr, path, 0, &file) && file) {
+                uint32_t size = SFileGetFileSize(file, nullptr);
+                data = SMemAlloc(size, __FILE__, __LINE__, 0);
+
+                if (!SFileReadFile(file, data, size, nullptr, nullptr, 0)) {
+                    SMemFree(data, __FILE__, __LINE__, 0);
+                    data = nullptr;
+                }
+
+                SFileCloseFile(file);
+            }
+        }
+
+        if (!data) {
+            break;
+        }
+
+        if (PumpBlpTextureAsync(texture, data)) {
+            reloaded++;
+        }
+    }
+
+    if (data) {
+        SMemFree(data, __FILE__, __LINE__, 0);
+    }
+
+    return reloaded;
 }

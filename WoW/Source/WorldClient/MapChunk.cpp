@@ -45,6 +45,7 @@
 #include "WoW/Source/WorldClient/DayNight__DNInfo.h"
 #include "WoW/Source/WorldClient/DayNight.h"
 #include "Engine/Source/Model2/M2Light.h"
+#include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00A3FBB8
 static const uint16_t s_bitMask[8] = { 0x1, 0x2, 0x4, 0x8, 0x10, 0x20, 0x40, 0x80 };
@@ -84,6 +85,8 @@ void CMapChunk::GetVertexPosition(int32_t index, C3Vector* pos) {
 // VERIFY: d0968beb manual
 // OFFSET: 0x007C3370
 void CMapChunk::Purge() {
+    wxl::seam::MapChunk::Purge::Before(this);
+
     if (this->m_renderChunk) {
         CMap::FreeRenderChunk(this->m_renderChunk);
         this->m_renderChunk = nullptr;
@@ -239,6 +242,8 @@ void CMapChunk::ProcessIffChunks(bool a3) {
         remaining -= chunk->m_size;
         chunk = reinterpret_cast<SIffChunk*>(data + chunk->m_size);
     }
+
+    wxl::seam::MapChunk::ProcessIffChunks::After(this, a3);
 }
 
 // VERIFY: 86d6cd8c manual
@@ -956,6 +961,12 @@ void CMapChunk::CreateSoundEmitters(bool a3) {
 // VERIFY: 80daf949 manual
 // OFFSET: 0x007C6150
 void CMapChunk::CreateRefs(CMapArea* area, uint32_t* mcrfPtr, uint32_t doodadRefs, uint32_t mapObjRefs) {
+    void* self = this;
+    void* gateArea = area;
+    if (wxl::seam::MapChunk::CreateRefs::Gate(&self, &gateArea, &mcrfPtr, &doodadRefs, &mapObjRefs)) {
+        return;
+    }
+
     C3Vector center(17066.666f, 17066.666f, 0.0f);
     uint32_t* mapObjRefList = &mcrfPtr[doodadRefs];
 

@@ -3011,6 +3011,8 @@ void CMap::LoadWdt() {
 
     CMap::ValidateShaders();
     SFileCloseFile(file);
+
+    wxl::seam::Map::LoadWdt::After();
 }
 
 // VERIFY: 99e76495 manual
@@ -3110,6 +3112,7 @@ void CMap::FreeMapObjGroup(CMapObjGroup* mapObjGroup) {
 // VERIFY: 8cfa8101 manual
 // OFFSET: 0x007C00A0
 void CMap::FreeArea(CMapArea* area) {
+    wxl::seam::Map::FreeArea::Before(area);
     area->m_lameAssLink.Unlink();
     area->~CMapArea();
     ObjectFree(*CMap::areaHeap, area->m_objectIndex);
@@ -5918,6 +5921,7 @@ void CMap::RenderFootprints() {
 // VERIFY: 331b297f manual
 // OFFSET: 0x007C3830
 void CMap::Unload() {
+    wxl::seam::Map::Unload::Before();
     CMap::PurgeMaps();
     CMap::s_lowDetail.Unload();
 

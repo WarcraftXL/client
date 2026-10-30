@@ -35,6 +35,7 @@
 #include "WoW/Source/Ui/WorldFrame.h"
 #include "WoW/Source/UIUtil/Camera.h"
 #include "WoW/Source/UIUtil/InputControl.h"
+#include "WarcraftXL/Seams.h"
 
 static const float MOUSE_DRAG_THRESHOLD = 8.0f;
 
@@ -837,6 +838,12 @@ void CheckToCancelCurrentChannelSpell() {
 // VERIFY: a56d8811 manual
 // OFFSET: 0x005FA170
 int32_t CGInputControl::SetControlBit(uint32_t bit, uint32_t time) {
+    void* self = this;
+    int32_t gated = 0;
+    if (wxl::seam::InputControl::SetControlBit::Gate(&gated, &self, &bit, &time)) {
+        return gated;
+    }
+
     if (bit & this->m_flags) {
         return 0;
     }
@@ -910,6 +917,12 @@ int32_t CGInputControl::SetControlBit(uint32_t bit, uint32_t time) {
 // VERIFY: 308e3e2e manual
 // OFFSET: 0x005FA450
 int32_t CGInputControl::UnsetControlBit(uint32_t bit, uint32_t time, int32_t keepSmoothing) {
+    void* self = this;
+    int32_t gated = 0;
+    if (wxl::seam::InputControl::UnsetControlBit::Gate(&gated, &self, &bit, &time, &keepSmoothing)) {
+        return gated;
+    }
+
     if (!(bit & this->m_flags)) {
         return 0;
     }

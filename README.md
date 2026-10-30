@@ -6,7 +6,7 @@
 
 [![Client](https://img.shields.io/badge/client-3.3.5a%20(12340)-orange.svg)](#-what-it-is)
 [![Target](https://img.shields.io/badge/target-x64-lightgrey.svg)](#-building)
-[![ABI](https://img.shields.io/badge/ABI-0.1.20-blue.svg)](https://github.com/WarcraftXL/sdk)
+[![ABI](https://img.shields.io/badge/ABI-0.1.46-blue.svg)](https://github.com/WarcraftXL/sdk)
 [![Runtime](https://img.shields.io/badge/runtime-WarcraftXL%20core-blue.svg)](https://github.com/WarcraftXL/core)
 
 </div>
@@ -116,6 +116,23 @@ Win32; the seam calls compile to nothing there.
 4. Start `WowClient64.exe`. The runtime's log is `Logs/WarcraftXL.log` next to it; the client's own
    logs are in the same folder.
 
+D3D9 is the default device. `SET gxApi "Vulkan"` in `WTF/Config.wtf`, `-vulkan` on the command line
+or `[gx] api = vulkan` in `WarcraftXL.ini` (which also takes a D3D9Ex request) choose the Vulkan
+device, `Engine/Source/Gx/CGxDeviceVk`, an adapter over the runtime's renderer. The window, its
+fullscreen (borderless), resizes and minimising, the frame, the world and the game's interface,
+the textures the engine draws into (the minimap, portraits, full-screen effects), Dear ImGui and the
+pointer go through Vulkan (the software pointer drawn into the frame as on D3D9, so screenshots
+show it); the client's shaders are their records translated by the runtime from
+DX9 bytecode, once per machine. Screenshots and the portraits read the frame back as on D3D9;
+`gxMultisample` multisamples it, the video options offering the counts the Vulkan device has, and
+the draws the engine keeps unsmoothed (the quest areas on the world map) stay hard-edged where the
+device has sample locations. On the Vulkan device the models' bones go through a bone palette
+(`GxBonePaletteSet`, 256 bones a draw: models load their largest skin profile, doodads instance
+more at once), skins past 16 bits of indices through pools of 32-bit indices, and textures load up
+to 16384 texels a side (the device permitting); D3D9 keeps the engine's own limits. A
+machine without Vulkan 1.3 stays on D3D9, and the log says why. Two console commands serve the renderer's tests: `gxVkSimulateLoss` (the Vulkan device lost and
+made again) and `gxCapture` (the next frame of the D3D9 device recorded to `WarcraftXL\captures\`).
+
 The signature checks of the original are kept (`WOWDECOMP_DISABLE_SIGNATURE_CHECKS=OFF`): modified
 interface files need the option, or a mod such as core's `wxl.glue-unlock` on the stock client.
 
@@ -166,7 +183,9 @@ are two different columns.
 ## 📂 Layout
 
 ```
-WarcraftXL/              the integration: CMake, Init.h/.cpp (WarcraftXLInit), Seams.h (adapters)
+WarcraftXL/              the integration: CMake, Init.h/.cpp (WarcraftXLInit), Seams.h (adapters),
+                         GxVulkan.h (the runtime's Vulkan renderer, for ConsoleDevice and CGxDeviceVk),
+                         GxCapture.h/.cpp (a frame of the D3D9 device recorded, gxCapture)
 WoW/                     the game: objects, world, interface, networking, database, glue screens
 Engine/                  the engine: storage, graphics, sound, scripting, frames
 Tools/                   WowClient (the executable with the crash logger), the Xvid decoder
@@ -192,7 +211,9 @@ NOTICE.md                provenance and what is, and is not, licensed
 
 Upstream's contributors are credited in [UPSTREAM.md](UPSTREAM.md). Tyrallis brought the model and
 appearance seams, skins over 65535 indices, the optional geometry's geoset ids and textures over
-4 MB (pull request #1).
+4 MB (pull request #1), then models of the world, bone watchers, the additive blend of later
+models, retail animation ids, Ogg Vorbis sounds and the geosets and eyes of later bodies (pull
+request #4).
 
 ## 📄 License
 

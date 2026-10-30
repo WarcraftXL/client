@@ -20,6 +20,7 @@
 #include "WoW/Source/Client.h"
 #include "WoW/Source/Hardware.h"
 #include "WoW/Source/Ui/GameUI.h"
+#include "WarcraftXL/GxVulkan.h"
 #include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00CABAC8
@@ -328,6 +329,10 @@ void ConsoleDeviceInitialize(const char* title, bool unused_a2, bool unused_a3) 
     ConsoleDetectSetDefaultsFormat(s_defaults, s_hardware);
     RegisterGxCVars();
     ConsoleCommandRegister("gxRestart", CCGxRestart, CATEGORY_GRAPHICS, nullptr);
+#if defined(WOWDECOMP_ARCH_64)
+    ConsoleCommandRegister("gxVkSimulateLoss", CCGxVkSimulateLoss, CATEGORY_GRAPHICS, "Marks the Vulkan device lost, to test its return");
+    ConsoleCommandRegister("gxCapture", CCGxCapture, CATEGORY_GRAPHICS, "Records the next frame of the D3D9 device to WarcraftXL\\captures");
+#endif
 
     GxAdapterMonitorModes(s_gxMonitorModes);
     ValidateFormatMonitor(s_fallbackFormat);
@@ -402,6 +407,13 @@ void ConsoleDeviceInitialize(const char* title, bool unused_a2, bool unused_a3) 
         api = GxApi_D3d9Ex;
     }
 
+    if (CmdLineGetBool(static_cast<CMDOPT>(CMD_VULKAN)) && GxApiSupported(GxApi_Vulkan)) {
+        api = GxApi_Vulkan;
+    }
+
+    // WarcraftXL.ini's [gx] api over the request: Vulkan for D3D9 and D3D9Ex, or back to D3D9.
+    api = WarcraftXL::GxSelectApi(api);
+
     s_requestedFormat.m_fixLag = s_cvGxFixLag->m_intValue != 0;
     s_requestedFormat.m_hwTnL = !CmdLineGetBool(CMD_SW_TNL);
 
@@ -421,6 +433,14 @@ void ConsoleDeviceInitialize(const char* title, bool unused_a2, bool unused_a3) 
     ValidateFormatMonitor(format);
 
     for (s_device = CreateGxDevice(api, OsWindowProc, format); !s_device; s_device = CreateGxDevice(api, OsWindowProc, format)) {
+        // A machine without the Vulkan floor, or a window Vulkan cannot present to, keeps D3D9,
+        // with the same format: the format is not what Vulkan refused.
+        if (api == GxApi_Vulkan) {
+            GxLog("ConsoleDeviceInitialize(): no Vulkan device, falling back to D3D9");
+            api = GxApi_D3d9;
+            continue;
+        }
+
         if (format.m_multisampleCount > 1) {
             if (format.m_multisampleCount - 2 <= 1) {
                 format.m_multisampleCount = 1;

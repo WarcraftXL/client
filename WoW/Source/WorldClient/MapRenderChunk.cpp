@@ -1,3 +1,4 @@
+#include "WarcraftXL/Seams.h"
 #include "MapRenderChunk.h"
 #include "WoW/Source/WorldClient/WorldConstants.h"
 #include <cmath>
@@ -344,6 +345,7 @@ void CMapRenderChunk::CreateLayer(CMapArea* area, SMLayer* layer, int32_t checkD
     if (checkDuplicate) {
         for (int32_t i = 0; i < this->m_layersCount; i++) {
             if (this->m_layers[i].m_textureId == layer->m_textureId) {
+                wxl::seam::MapRenderChunk::CreateLayer::After(this, area, layer, checkDuplicate);
                 return;
             }
         }
@@ -373,6 +375,8 @@ void CMapRenderChunk::CreateLayer(CMapArea* area, SMLayer* layer, int32_t checkD
     }
 
     this->m_layersCount++;
+
+    wxl::seam::MapRenderChunk::CreateLayer::After(this, area, layer, checkDuplicate);
 }
 
 // VERIFY: 6c5dc3eb manual
@@ -2146,6 +2150,8 @@ void CMapRenderChunk::ComputeTexMatrices(C44Matrix& layerMatrix, C44Matrix& alph
 // VERIFY: 0307c652 manual
 // OFFSET: 0x007D0760
 void CMapRenderChunk::RenderMultiPassAdditive(CMapRenderChunk* renderChunk) {
+    wxl::seam::MapRenderChunk::RenderMultiPassAdditive::Before(renderChunk);
+
     C44Matrix layerMatrix;
     C44Matrix alphaMatrix;
     C3Vector offset = CWorldScene::s_activeWorldView - renderChunk->m_vec1;
@@ -2219,11 +2225,15 @@ void CMapRenderChunk::RenderMultiPassAdditive(CMapRenderChunk* renderChunk) {
     GxRsSet(GxRs_FogColor, *reinterpret_cast<int32_t*>(&CMapRenderChunk::s_fogColor));
     GxRsSet(GxRs_Texture0, 0);
     GxRsSet(GxRs_Texture1, 0);
+
+    wxl::seam::MapRenderChunk::RenderMultiPassAdditive::After(renderChunk);
 }
 
 // VERIFY: 18189b69 manual
 // OFFSET: 0x007D0D70
 void CMapRenderChunk::RenderMultiPassAlpha(CMapRenderChunk* renderChunk) {
+    wxl::seam::MapRenderChunk::RenderMultiPassAlpha::Before(renderChunk);
+
     C44Matrix layerMatrix;
     C44Matrix alphaMatrix;
     C3Vector offset = CWorldScene::s_activeWorldView - renderChunk->m_vec1;
@@ -2297,11 +2307,15 @@ void CMapRenderChunk::RenderMultiPassAlpha(CMapRenderChunk* renderChunk) {
 
     GxRsSet(GxRs_Texture0, 0);
     GxRsSet(GxRs_Texture1, 0);
+
+    wxl::seam::MapRenderChunk::RenderMultiPassAlpha::After(renderChunk);
 }
 
 // VERIFY: 48db2dd7 manual
 // OFFSET: 0x007D13F0
 void CMapRenderChunk::RenderMultiPassPixelShaderBigAlpha(CMapRenderChunk* renderChunk) {
+    wxl::seam::MapRenderChunk::RenderMultiPassPixelShaderBigAlpha::Before(renderChunk);
+
     C44Matrix layerMatrix;
     C44Matrix alphaMatrix;
     C3Vector offset = CWorldScene::s_activeWorldView - renderChunk->m_vec1;
@@ -2392,11 +2406,15 @@ void CMapRenderChunk::RenderMultiPassPixelShaderBigAlpha(CMapRenderChunk* render
     g_theGxDevicePtr->RsSet(GxRs_PixelShader, static_cast<CGxShader*>(nullptr));
     GxRsSet(GxRs_Texture0, 0);
     GxRsSet(GxRs_Texture1, 0);
+
+    wxl::seam::MapRenderChunk::RenderMultiPassPixelShaderBigAlpha::After(renderChunk);
 }
 
 // VERIFY: fd0515a3 manual
 // OFFSET: 0x007D1AD0
 void CMapRenderChunk::RenderMultiPassPixelShader(CMapRenderChunk* renderChunk) {
+    wxl::seam::MapRenderChunk::RenderMultiPassPixelShader::Before(renderChunk);
+
     C44Matrix layerMatrix;
     C44Matrix alphaMatrix;
     C3Vector offset = CWorldScene::s_activeWorldView - renderChunk->m_vec1;
@@ -2463,11 +2481,15 @@ void CMapRenderChunk::RenderMultiPassPixelShader(CMapRenderChunk* renderChunk) {
     g_theGxDevicePtr->RsSet(GxRs_PixelShader, static_cast<CGxShader*>(nullptr));
     GxRsSet(GxRs_Texture0, 0);
     GxRsSet(GxRs_Texture1, 0);
+
+    wxl::seam::MapRenderChunk::RenderMultiPassPixelShader::After(renderChunk);
 }
 
 // VERIFY: 136fc4a9 manual
 // OFFSET: 0x007D20A0
 void CMapRenderChunk::RenderMultiPassVertexPixelShaderBigAlpha(CMapRenderChunk* renderChunk) {
+    wxl::seam::MapRenderChunk::RenderMultiPassVertexPixelShaderBigAlpha::Before(renderChunk);
+
     SVertexShaderConstants& consts = CMapRenderChunk::s_vertexShaderConsts;
     C4Vector white;
     white.x = 1.0f;
@@ -2555,11 +2577,15 @@ void CMapRenderChunk::RenderMultiPassVertexPixelShaderBigAlpha(CMapRenderChunk* 
     g_theGxDevicePtr->RsSet(GxRs_PixelShader, static_cast<CGxShader*>(nullptr));
     GxRsSet(GxRs_Texture0, 0);
     GxRsSet(GxRs_Texture1, 0);
+
+    wxl::seam::MapRenderChunk::RenderMultiPassVertexPixelShaderBigAlpha::After(renderChunk);
 }
 
 // VERIFY: a31b22da manual
 // OFFSET: 0x007D2520
 void CMapRenderChunk::RenderMultiPassVertexPixelShader(CMapRenderChunk* renderChunk) {
+    wxl::seam::MapRenderChunk::RenderMultiPassVertexPixelShader::Before(renderChunk);
+
     SVertexShaderConstants& consts = CMapRenderChunk::s_vertexShaderConsts;
     C4Vector white;
     white.x = 1.0f;
@@ -2623,11 +2649,15 @@ void CMapRenderChunk::RenderMultiPassVertexPixelShader(CMapRenderChunk* renderCh
     g_theGxDevicePtr->RsSet(GxRs_PixelShader, static_cast<CGxShader*>(nullptr));
     GxRsSet(GxRs_Texture0, 0);
     GxRsSet(GxRs_Texture1, 0);
+
+    wxl::seam::MapRenderChunk::RenderMultiPassVertexPixelShader::After(renderChunk);
 }
 
 // VERIFY: 22069b93 manual
 // OFFSET: 0x007D28B0
 void CMapRenderChunk::RenderSinglePassPixelShader() {
+    wxl::seam::MapRenderChunk::RenderSinglePassPixelShader::Before(this);
+
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
     GxUpdateAlphaRef(GxRs_AlphaRef);
 
@@ -2682,11 +2712,15 @@ void CMapRenderChunk::RenderSinglePassPixelShader() {
     for (; i >= 0; i--) {
         g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), static_cast<CGxTex*>(nullptr));
     }
+
+    wxl::seam::MapRenderChunk::RenderSinglePassPixelShader::After(this);
 }
 
 // VERIFY: cad126b2 manual
 // OFFSET: 0x007D2D70
 void CMapRenderChunk::RenderSinglePassVertexPixelShader() {
+    wxl::seam::MapRenderChunk::RenderSinglePassVertexPixelShader::Before(this);
+
     SVertexShaderConstants& consts = CMapRenderChunk::s_vertexShaderConsts;
 
     GxRsSet(GxRs_BlendingMode, GxBlend_Opaque);
@@ -2738,6 +2772,8 @@ void CMapRenderChunk::RenderSinglePassVertexPixelShader() {
     for (; i >= 0; i--) {
         g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + i), static_cast<CGxTex*>(nullptr));
     }
+
+    wxl::seam::MapRenderChunk::RenderSinglePassVertexPixelShader::After(this);
 }
 
 // VERIFY: 1f2ad08e manual

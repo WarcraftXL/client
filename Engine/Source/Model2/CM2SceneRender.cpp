@@ -27,6 +27,9 @@ const uint32_t s_fogModes[M2BLEND_COUNT] = { 1, 1, 1, 2, 2, 3, 4, 2 };
 // STATIC: 0x00AF58A8
 static C44Matrix s_identity;
 
+// Not in the original: the bones a draw hands the bone palette (GxBonePaletteSet).
+static C34Matrix s_paletteBones[256];
+
 // VERIFY: 6a3520ef manual
 // OFFSET: 0x0081F330
 CM2SceneRender::CM2SceneRender(CM2Scene* scene) {
@@ -428,7 +431,11 @@ void CM2SceneRender::DrawBatch() {
     this->SetupMaterial();
     this->SetupTextures();
 
-    if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex)) {
+    if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex) && g_theGxDevicePtr->Caps().BonePalette()) {
+        // Not in the original: a device with a bone palette takes the bones there, not from c31.
+        M2PaletteBones(s_paletteBones, this->m_curModel, this->m_data, this->m_curSkinSection->m_boneComboIndex, this->m_curSkinSection->m_boneCount);
+        GxBonePaletteSet(s_paletteBones, this->m_curSkinSection->m_boneCount);
+    } else if (CShaderEffect::s_enableShaders && (this->m_curType != this->m_prevType || this->m_curModel != this->m_prevModel || this->m_curSkinSection->m_boneComboIndex != this->m_prevSkinSection->m_boneComboIndex)) {
         float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
 
         for (uint32_t i = 0; i < this->m_curSkinSection->m_boneCount; i++) {
@@ -469,27 +476,21 @@ void CM2SceneRender::DrawBatch() {
     batch.m_count = this->m_curSkinSection->m_indexCount;
 
     if (CShaderEffect::s_enableShaders) {
-        batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
-        batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
-        g_theGxDevicePtr->Draw(&batch, 1);
+        GxDrawIndexRange(&batch, this->m_curSkinSection->m_vertexStart, this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1);
     } else if (sharedVertices) {
         CGxMatrixStack& world = g_theGxDevicePtr->m_xforms[GxXform_World];
         world.m_dirty = 1;
         world.m_flags[world.m_level] &= ~CGxMatrixStack::F_Identity;
         world.m_mtx[world.m_level] = this->m_curModel->m_boneMatrices[0];
 
-        batch.m_minIndex = this->m_curSkinSection->m_vertexStart;
-        batch.m_maxIndex = this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1;
-        g_theGxDevicePtr->Draw(&batch, 1);
+        GxDrawIndexRange(&batch, this->m_curSkinSection->m_vertexStart, this->m_curSkinSection->m_vertexCount + this->m_curSkinSection->m_vertexStart - 1);
 
         CGxMatrixStack& restore = g_theGxDevicePtr->m_xforms[GxXform_World];
         restore.m_dirty = 1;
         restore.m_flags[restore.m_level] &= ~CGxMatrixStack::F_Identity;
         restore.m_mtx[restore.m_level] = s_identity;
     } else {
-        batch.m_minIndex = 0;
-        batch.m_maxIndex = this->m_curSkinSection->m_vertexCount - 1;
-        g_theGxDevicePtr->Draw(&batch, 1);
+        GxDrawIndexRange(&batch, 0, this->m_curSkinSection->m_vertexCount - 1);
     }
 
     if (wxl::seam::Listening(WXL_EV_ModelBatchDrawn)) {
@@ -628,6 +629,23 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
                 instances = total - done;
             }
 
+            if (g_theGxDevicePtr->Caps().BonePalette()) {
+                // Not in the original: a device with a bone palette takes every instance's bones
+                // there; the instancing budget is the palette's (CM2Shared::InitializeSkinProfile).
+                C34Matrix* bones = s_paletteBones;
+
+                for (uint32_t n = 0; n < instances && bones + this->m_curSkinSection->m_boneCount <= s_paletteBones + 256; n++) {
+                    bones = M2PaletteBones(bones, elements[indices[done + n]].m_model, this->m_data, this->m_curSkinSection->m_boneComboIndex, this->m_curSkinSection->m_boneCount);
+                }
+
+                GxBonePaletteSet(s_paletteBones, static_cast<uint32_t>(bones - s_paletteBones));
+                CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
+
+                batch.m_count = instances * this->m_curSkinSection->m_indexCount;
+                GxDrawIndexRange(&batch, 0, instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
+                continue;
+            }
+
             float* constants = g_theGxDevicePtr->ShaderConstantsLock(GxSh_Vertex) + 31 * 4;
             uint32_t registers = 0;
 
@@ -657,8 +675,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             CShaderEffect::SetShaders(this->m_curElement->m_vertexPermute, this->m_curElement->m_pixelPermute);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-            batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
-            g_theGxDevicePtr->Draw(&batch, 1);
+            GxDrawIndexRange(&batch, 0, instances * this->m_curShared->m_skinData->m_vertices.m_count - 1);
         }
     } else {
         for (uint32_t done = 0; done < total; done += instances) {
@@ -694,8 +711,7 @@ void CM2SceneRender::DrawBatchDoodad(M2Element* elements, uint32_t* indices) {
             GxRsSet(GxRs_NormalizeNormals, normalize);
 
             batch.m_count = instances * this->m_curSkinSection->m_indexCount;
-            batch.m_maxIndex = static_cast<uint16_t>(instances * this->m_curSkinSection->m_vertexCount - 1);
-            g_theGxDevicePtr->Draw(&batch, 1);
+            GxDrawIndexRange(&batch, 0, instances * this->m_curSkinSection->m_vertexCount - 1);
         }
     }
 }

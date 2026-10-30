@@ -17,7 +17,9 @@ enum EGxApi {
     GxApi_D3d10 = 3,
     GxApi_D3d11 = 4,
     GxApi_GLL = 5,
-    GxApis_Last = 6,
+    // WarcraftXL's Vulkan renderer (WarcraftXL/GxVulkan.h), appended after the stock APIs.
+    GxApi_Vulkan = 6,
+    GxApis_Last = 7,
 };
 
 enum EGxBlend {
@@ -209,6 +211,14 @@ class CGxBatch {
     /* 000E */ uint16_t m_maxIndex;
 };
 
+// Not in the original: a batch over 32-bit indices (GxPoolTarget_Index32, GxDraw32), its vertex
+// range wider than CGxBatch's 16 bits. A device reads its CGxBatch part as any batch's.
+class CGxBatch32 : public CGxBatch {
+    public:
+    uint32_t m_minIndex32;
+    uint32_t m_maxIndex32;
+};
+
 enum EGxColorFormat {
     GxCF_argb = 0,
     GxCF_rgba = 1,
@@ -252,6 +262,20 @@ class CGxCaps {
     /* 0130 */ int32_t m_shaderAlphaRef;
     /* 0134 */ int32_t unk_0134;
     /* 0138 */ int32_t unk_0138;
+
+    // Not in the original: caps of the recompiled client's own devices, kept in words the stock
+    // layout leaves unused (wxl/core/gx_vk.h, WXL_GX_VK_CAP_*); the D3D9 devices leave them zero.
+
+    // The bones a bone palette holds (GxBonePaletteSet); 0: none, the bones go through the vertex
+    // registers from c31.
+    uint32_t BonePalette() const {
+        return this->unused_0114[0];
+    }
+
+    // Whether index pools of 32-bit indices exist (GxPoolTarget_Index32).
+    int32_t Index32() const {
+        return this->unused_0114[1] != 0;
+    }
 };
 
 class CGxQuery {
@@ -273,7 +297,16 @@ enum EGxPoolTarget {
     GxPoolTarget_Vertex = 0,
     GxPoolTarget_Index = 1,
     GxPoolTargets_Last = 2,
+    // Not in the original: an index pool of 32-bit indices, where the caps offer it
+    // (CGxCaps::Index32). It has no stream buffer of its own; the device's arrays by target
+    // (m_bufLocked, m_emergencyMem) take it in the index pool's place (GxPoolSlot).
+    GxPoolTarget_Index32 = 2,
 };
+
+// The place of a pool target in the device's arrays by target: an index pool's for both widths.
+inline uint32_t GxPoolSlot(EGxPoolTarget target) {
+    return target == GxPoolTarget_Vertex ? 0 : 1;
+}
 
 enum EGxPoolUsage {
     GxPoolUsage_Static = 0,

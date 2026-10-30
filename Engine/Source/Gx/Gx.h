@@ -8,6 +8,7 @@
 #include "Engine/Source/Gx/CGxTex.h"
 #include "Engine/Source/Storm/H/stpl.h"
 #include "Engine/Source/Tempest/C2iVector.h"
+#include "Engine/Source/Tempest/C34Matrix.h"
 
 static const float oo255 = (1.0f / 255.0f);
 
@@ -54,6 +55,7 @@ class GxDrawListEntry {
 CGxDevice* CreateCGxDeviceD3d();
 CGxDevice* CreateCGxDeviceD3d9Ex();
 CGxDevice* CreateCGxDeviceOpenGl();
+CGxDevice* CreateCGxDeviceVk();
 CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& format);
 int32_t GxAdapterDesktopMode(CGxMonitorMode& mode);
 int32_t GxAdapterID(uint16_t& vendorID, uint16_t& deviceID, uint32_t& driverVersionHi, uint32_t& driverVersionLo);
@@ -126,6 +128,15 @@ void GxTexSetWrap(CGxTex* texId, EGxTexWrapMode wrapU, EGxTexWrapMode wrapV);
 void GxSetMaxFPS(uint32_t maxFPS);
 void GxSetMaxFPSBk(uint32_t maxFPSBk);
 void GxShaderConstantsSet(EGxShTarget target, uint32_t index, const float* constants, uint32_t count);
+// Not in the original: the bones the next skinned draws read (C34Matrix each), on a device whose
+// caps hold a bone palette (CGxCaps::BonePalette), in the place of the vertex registers from c31.
+void GxBonePaletteSet(const C34Matrix* bones, uint32_t count);
+// Not in the original: a draw over the bound 32-bit index buffer (GxPoolTarget_Index32), its
+// vertex range wider than 16 bits.
+void GxDraw32(CGxBatch32* batch, int32_t count);
+// Not in the original: @p batch drawn over vertices @p minIndex to @p maxIndex: through GxDraw32
+// when the bound index buffer is 32-bit, else as CGxBatch holds the range (16 bits).
+void GxDrawIndexRange(CGxBatch* batch, uint32_t minIndex, uint32_t maxIndex);
 int32_t GxTexCopy(CGxTex* dest, const C2iVector& destPos, const C2iVector& sourcePos, const C2iVector& size, uint32_t level, uint32_t plane);
 void GxTexDestroy(CGxTex* texId);
 int32_t GxTexReusable(CGxTexParms& parms);

@@ -237,6 +237,7 @@ CMapChunk* CMapArea::PrepareChunk(int32_t chunkX, int32_t chunkY) {
     chunk->m_sOffset.y = 8 * (chunkY + this->m_tileChunkIndex.y);
     chunk->Create(reinterpret_cast<SIffChunk*>(static_cast<uint8_t*>(this->m_fileBuffer) + this->m_chunkInfo[index].m_offset), firstUse);
 
+    wxl::seam::MapArea::PrepareChunk::After(this, chunkX, chunkY);
     return chunk;
 }
 
@@ -307,6 +308,7 @@ void CMapArea::LoadTextures(char* fileNames, uint32_t fileNamesSize) {
 // VERIFY: 2e3ea90a manual
 // OFFSET: 0x007D6EF0
 void CMapArea::ProcessIffChunks() {
+    wxl::seam::MapArea::ProcessIffChunks::Before(this);
     SIffChunk* version = static_cast<SIffChunk*>(this->m_fileBuffer);
     uint8_t* header = reinterpret_cast<uint8_t*>(&version->m_data) + version->m_size + offsetof(SIffChunk, m_data);
 
@@ -339,6 +341,7 @@ void CMapArea::ProcessIffChunks() {
 
     this->m_doodadDefCount = reinterpret_cast<SIffChunk*>(header + this->m_header->m_mddf)->m_size / sizeof(SMDoodadDef);
     this->m_mapObjDefCount = reinterpret_cast<SIffChunk*>(header + this->m_header->m_modf)->m_size / sizeof(SMMapObjDef);
+    wxl::seam::MapArea::ProcessIffChunks::After(this);
 }
 
 // VERIFY: ff270d7a auto

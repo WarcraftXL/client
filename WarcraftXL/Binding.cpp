@@ -16,6 +16,7 @@
 #include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/MPQGlobals.h"
 #include "Engine/Source/ConsoleBase/ConsoleVar.h"
 #include "Engine/Source/FrameScript/FrameScript.h"
+#include "Engine/Source/FrameXML/LoadXML.h"
 #include "Engine/Source/BlizzardCore/Source/Packages/Mopaq/SFileArchives.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.h"
@@ -36,6 +37,7 @@
 #include "WoW/Source/DB/Rec/ItemDisplayInfoRec.h"
 #include "Engine/Source/Tempest/CRect.h"
 #include "Engine/Source/Tempest/C3Vector.h"
+#include "Engine/Source/Tempest/C44Matrix.h"
 #include "Engine/Source/Os/TimeManager.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
 #include "WoW/Source/Object/Container.h"
@@ -65,6 +67,11 @@
 #include "WoW/Source/Object/MovementShared.h"
 #include "WoW/Source/ObjectMgrClient/ObjectMgrClient.h"
 #include "WoW/Source/Ui/ChatFrame.h"
+#include "WoW/Source/Ui/WorldFrame.h"
+#include "WoW/Source/Ui/NamePlateFrame.h"
+#include "WoW/Source/UIUtil/Camera.h"
+#include "WoW/Source/UIUtil/InputControl.h"
+#include "Engine/Source/Frame/CSimpleTop.h"
 #include "WoW/Source/Ui/DuelInfo.h"
 #include "WoW/Source/Ui/LootFrame.h"
 #include "WoW/Source/Ui/ReputationInfo.h"
@@ -73,11 +80,19 @@
 #include "WoW/Source/Ui/PartyFrame.h"
 #include "WoW/Source/Ui/RaidInfo.h"
 #include "WoW/Source/WorldClient/MapArea.h"
+#include "WoW/Source/WowSvcs/WowSvcsClient/ClientServices.h"
+#include "WoW/Source/WorldClient/MapChunk.h"
+#include "WoW/Source/WorldClient/MapLowDetail.h"
+#include "Engine/Source/Storm/H/storm.h"
+#include "WoW/Source/WorldClient/MapRenderChunk.h"
+#include "WoW/Source/WorldClient/DetailDoodad.h"
+#include "WoW/Source/Object/Movement.h"
 #include "WoW/Source/WorldClient/MapDoodadDef.h"
 #include "WoW/Source/WorldClient/MapObj.h"
 #include "WoW/Source/WorldClient/MapObjGroup.h"
 #include "WoW/Source/WorldClient/Map.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "wxl/core/camera_facing.hpp"
 #include "wxl/core/gpu.hpp"
 #include "wxl/core/filestack.hpp"
 #include "wxl/core/storm.hpp"
@@ -179,6 +194,8 @@ namespace {
 // Defined beside the statics they reach, which their files keep to themselves.
 void WarcraftXLAnswerDuel(WOWGUID arbiter, WOWGUID challenger, bool accept);
 int32_t WarcraftXLNextLootRollId();
+uint32_t WarcraftXLEvictModels(const char* leaf, void** out, uint32_t capacity);
+uint32_t WarcraftXLReloadTextures(const char* name, uint32_t* busy, uint32_t* atlas);
 
 namespace WarcraftXL::Binding {
     // --- the field rows, generated from the table --------------------------------------------
@@ -620,6 +637,302 @@ namespace WarcraftXL::Binding {
     // Both D3D9 devices keep the same copy of what they last set (m_deviceStates, the current
     // declaration and streams); spoiling it makes the next IStateSync send everything again.
 
+    int32_t WXL_CALL gx_device_api(void) {
+        return g_theGxDevicePtr ? static_cast<int32_t>(g_theGxDevicePtr->DeviceApi()) : -1;
+    }
+
+    wxl_bool WXL_CALL gx_world_view(wxl_core_world_view* out) {
+        if (!g_theGxDevicePtr || !out) {
+            return WXL_FALSE;
+        }
+        const CGxMatrixStack& view = g_theGxDevicePtr->m_xforms[GxXform_View];
+        const uint32_t level = view.m_level > 3 ? 3 : view.m_level;
+        std::memcpy(out->projection, &g_theGxDevicePtr->m_projNative, sizeof out->projection);
+        std::memcpy(out->view, &view.m_mtx[level], sizeof out->view);
+        const CBoundingBox& box = g_theGxDevicePtr->m_viewport;
+        out->viewport[0] = box.m_x.m_l;
+        out->viewport[1] = box.m_x.m_h;
+        out->viewport[2] = box.m_y.m_l;
+        out->viewport[3] = box.m_y.m_h;
+        out->viewport[4] = box.m_z.m_l;
+        out->viewport[5] = box.m_z.m_h;
+        out->window[0] = g_theGxDevicePtr->m_curWindowRect.maxX;
+        out->window[1] = g_theGxDevicePtr->m_curWindowRect.maxY;
+        out->eye = wxl_vec3{CWorldScene::s_activeWorldView.x, CWorldScene::s_activeWorldView.y, CWorldScene::s_activeWorldView.z};
+        return WXL_TRUE;
+    }
+
+    void* WXL_CALL gx_texture_ready(void* texture) {
+        if (!g_theGxDevicePtr || !texture) {
+            return nullptr;
+        }
+        CGxTex* gx = static_cast<CTexture*>(texture)->m_gxTex;
+        if (!gx) {
+            return nullptr; // the file is still loading
+        }
+        // Made on the device and filled, as the engine does before binding it.
+        g_theGxDevicePtr->ITexMarkAsUpdated(gx);
+        return gx->m_needsCreation || !gx->m_apiSpecificData ? nullptr : gx;
+    }
+
+    void WXL_CALL gx_vertex_constants_set(uint32_t first, const float* rows, uint32_t count) {
+        if (g_theGxDevicePtr && rows && count) {
+            GxShaderConstantsSet(GxSh_Vertex, first, rows, count);
+        }
+    }
+
+    void WXL_CALL gx_pixel_constants_set(uint32_t first, const float* rows, uint32_t count) {
+        if (g_theGxDevicePtr && rows && count) {
+            GxShaderConstantsSet(GxSh_Pixel, first, rows, count);
+        }
+    }
+
+    void* WXL_CALL gx_texture_stage(uint32_t stage) {
+        if (!g_theGxDevicePtr || stage > 15) {
+            return nullptr;
+        }
+        return g_theGxDevicePtr->m_appRenderStates[GxRs_Texture0 + stage].m_value.m_data.p;
+    }
+
+    void WXL_CALL gx_texture_stage_set(uint32_t stage, void* texture) {
+        if (g_theGxDevicePtr && stage <= 15) {
+            g_theGxDevicePtr->RsSet(static_cast<EGxRenderState>(GxRs_Texture0 + stage), texture);
+        }
+    }
+
+    void WXL_CALL gx_texture_wrap(void* texture) {
+        if (g_theGxDevicePtr && texture) {
+            GxTexSetWrap(static_cast<CGxTex*>(texture), GxTex_Wrap, GxTex_Wrap);
+        }
+    }
+
+    int32_t WXL_CALL gx_render_state(uint32_t which) {
+        if (!g_theGxDevicePtr || which >= GxRenderStates_Last) {
+            return 0;
+        }
+        return g_theGxDevicePtr->m_appRenderStates[which].m_value.m_data.i[0];
+    }
+
+    void WXL_CALL gx_render_state_set(uint32_t which, int32_t value) {
+        if (g_theGxDevicePtr && which < GxRenderStates_Last) {
+            GxRsSet(static_cast<EGxRenderState>(which), value);
+        }
+    }
+
+    void WXL_CALL gx_draw(const void* batch, int32_t count) {
+        if (g_theGxDevicePtr && batch) {
+            g_theGxDevicePtr->Draw(const_cast<CGxBatch*>(static_cast<const CGxBatch*>(batch)), count);
+        }
+    }
+
+    wxl_bool WXL_CALL gx_shader_record(const void* shader, wxl_core_shader_record* out) {
+        if (!shader || !out) {
+            return WXL_FALSE;
+        }
+        const CGxShader* record = static_cast<const CGxShader*>(shader);
+        out->name = record->m_key.m_str;
+        out->target = record->m_target;
+        out->code = record->m_code.m_data;
+        out->size = record->m_code.m_count;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL gx_shader_code_set(void* shader, const void* code, uint32_t size) {
+        if (!shader) {
+            return;
+        }
+        CGxShader* record = static_cast<CGxShader*>(shader);
+        record->m_code.m_data = static_cast<uint8_t*>(const_cast<void*>(code));
+        record->m_code.m_count = size;
+    }
+
+    wxl_bool WXL_CALL gx_xform_get(uint32_t xform, float* matrix) {
+        if (!g_theGxDevicePtr || !matrix || xform > GxXform_View) {
+            return WXL_FALSE;
+        }
+        const CGxMatrixStack& stack = g_theGxDevicePtr->m_xforms[xform];
+        const uint32_t level = stack.m_level > 3 ? 3 : stack.m_level;
+        std::memcpy(matrix, &stack.m_mtx[level], 16 * sizeof(float));
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL gx_xform_set(uint32_t xform, const float* matrix) {
+        if (g_theGxDevicePtr && matrix && xform <= GxXform_View) {
+            C44Matrix m;
+            std::memcpy(&m, matrix, sizeof m);
+            GxXformSet(static_cast<EGxXform>(xform), m);
+        }
+    }
+
+    wxl_bool WXL_CALL terrain_render_chunk(const void* chunk, wxl_core_render_chunk* out) {
+        if (!chunk || !out) {
+            return WXL_FALSE;
+        }
+        const CMapRenderChunk* c = static_cast<const CMapRenderChunk*>(chunk);
+        if (c->m_layersCount > 4) {
+            return WXL_FALSE;
+        }
+        *out = wxl_core_render_chunk{};
+        out->layers = c->m_layersCount;
+        out->render_flags = static_cast<uint16_t>(c->m_renderFlags);
+        for (uint32_t i = 0; i < out->layers; i++) {
+            out->layer_flags[i] = static_cast<uint16_t>(c->m_layers[i].m_flags);
+            out->layer_texture[i] = static_cast<uint32_t>(c->m_layers[i].m_textureId);
+        }
+        out->batch = &c->m_batch;
+        out->map_chunk = c->m_mapChunks[0];
+        out->map_chunk2 = c->m_mapChunks[1];
+        out->pair = c->m_unkFlags & 3u;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_wdt(wxl_core_wdt* out) {
+        if (!out) {
+            return WXL_FALSE;
+        }
+        out->path = CMap::wdtFilename;
+        out->flags = &CMap::header.m_flags;
+        out->tiles = &CMap::m_areaInfo[0].m_flags;
+        out->map_path = CMap::mapPath;
+        out->map_name = CMap::mapName;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL map_validate_shaders() {
+        CMap::ValidateShaders();
+    }
+
+    wxl_bool WXL_CALL terrain_area_file(const void* area, wxl_core_area_file* out) {
+        if (!area || !out) {
+            return WXL_FALSE;
+        }
+        const CMapArea* a = static_cast<const CMapArea*>(area);
+        out->tile_x = a->m_index.x;
+        out->tile_y = a->m_index.y;
+        out->data = a->m_fileBuffer;
+        out->size = static_cast<uint32_t>(a->m_fileSize);
+        return out->data && out->size ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL map_area_split_set(void* area, const wxl_core_area_split* split) {
+        if (!area || !split) {
+            return WXL_FALSE;
+        }
+        CMapArea* a = static_cast<CMapArea*>(area);
+        a->m_chunkInfo = static_cast<SMChunkInfo*>(split->chunk_info);
+        a->m_doodadDef = static_cast<SMDoodadDef*>(split->doodad_defs);
+        a->m_mapObjDef = static_cast<SMMapObjDef*>(split->map_obj_defs);
+        a->m_doodadDefCount = static_cast<int32_t>(split->doodad_count);
+        a->m_mapObjDefCount = static_cast<int32_t>(split->map_obj_count);
+        a->m_m2FileNames = split->model_names;
+        a->m_wmoFileNames = split->map_obj_names;
+        a->m_modelFilenamesOffsets = split->model_offsets;
+        a->m_wmoFilenamesOffsets = split->map_obj_offsets;
+        a->m_textureFlags = split->texture_flags;
+        if (split->texture_names && split->texture_names_size) {
+            a->LoadTextures(split->texture_names, split->texture_names_size);
+        }
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_area_placements(const void* area, wxl_core_area_split* out) {
+        if (!area || !out) {
+            return WXL_FALSE;
+        }
+        const CMapArea* a = static_cast<const CMapArea*>(area);
+        *out = wxl_core_area_split{};
+        out->doodad_defs = a->m_doodadDef;
+        out->map_obj_defs = a->m_mapObjDef;
+        out->doodad_count = static_cast<uint32_t>(a->m_doodadDefCount);
+        out->map_obj_count = static_cast<uint32_t>(a->m_mapObjDefCount);
+        out->model_names = a->m_m2FileNames;
+        out->map_obj_names = a->m_wmoFileNames;
+        out->model_offsets = a->m_modelFilenamesOffsets;
+        out->map_obj_offsets = a->m_wmoFilenamesOffsets;
+        return WXL_TRUE;
+    }
+
+    void* WXL_CALL map_low_detail_set(void* detail, const void* bytes, uint32_t size, uint32_t area_offsets) {
+        if (!detail || !bytes || !size || area_offsets >= size) {
+            return nullptr;
+        }
+        CMapLowDetail* d = static_cast<CMapLowDetail*>(detail);
+        char* data = static_cast<char*>(SMemAlloc(size, __FILE__, __LINE__, 0));
+        if (!data) {
+            return nullptr;
+        }
+        memcpy(data, bytes, size);
+        d->m_data = data;
+        d->m_mapObjNames = nullptr;
+        d->m_mapObjNameOffsets = nullptr;
+        d->m_mapObjDefs = nullptr;
+        d->m_mapObjDefCount = 0;
+        d->m_areaOffsets = reinterpret_cast<uint32_t*>(data + area_offsets);
+        return data;
+    }
+
+    wxl_bool WXL_CALL map_area_low_add(void* detail, const wxl_core_area_low* a) {
+        if (!detail || !a || a->index >= 4096) {
+            return WXL_FALSE;
+        }
+        CMapLowDetail* d = static_cast<CMapLowDetail*>(detail);
+        if (!d->m_data) {
+            return WXL_FALSE;
+        }
+        CMapAreaLow* area = CMap::AllocAreaLow();
+        if (!area) {
+            return WXL_FALSE;
+        }
+        area->m_heights = reinterpret_cast<int16_t*>(d->m_data + a->heights);
+        area->m_holes = a->holes ? reinterpret_cast<uint16_t*>(d->m_data + a->holes) : nullptr;
+        area->m_indexCount = a->index_count;
+        area->m_index.x = a->column;
+        area->m_index.y = a->row;
+        area->m_topLeft.x = a->top_left[0];
+        area->m_topLeft.y = a->top_left[1];
+        area->m_bbox.b = C3Vector(a->box_min[0], a->box_min[1], a->box_min[2]);
+        area->m_bbox.t = C3Vector(a->box_max[0], a->box_max[1], a->box_max[2]);
+        area->m_sphere.c = C3Vector(a->center[0], a->center[1], a->center[2]);
+        area->m_sphere.r = a->radius;
+        d->m_areas[a->index] = area;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_chunk_parts(const void* chunk, wxl_core_map_chunk* out) {
+        if (!chunk || !out) {
+            return WXL_FALSE;
+        }
+        const CMapChunk* c = static_cast<const CMapChunk*>(chunk);
+        out->begin = c->m_chunkInfoBeginPtr;
+        out->header = c->m_header;
+        out->index_x = c->m_aIndex.x;
+        out->index_y = c->m_aIndex.y;
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL map_chunk_split_set(void* chunk, const wxl_core_chunk_split* split) {
+        if (!chunk || !split) {
+            return WXL_FALSE;
+        }
+        CMapChunk* c = static_cast<CMapChunk*>(chunk);
+        c->m_layers = static_cast<SMLayer*>(split->layers);
+        c->m_additionalShadowmap = static_cast<uint8_t*>(split->alpha);
+        c->m_shadowMap = static_cast<uint8_t*>(split->shadow);
+        c->m_mcrfPtr = static_cast<uint8_t*>(split->refs);
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL map_chunk_create_refs(void* chunk, void* area, const uint32_t* refs, uint32_t doodads, uint32_t map_objs) {
+        if (!chunk || !area || (!refs && (doodads || map_objs))) {
+            return;
+        }
+        static_cast<CMapChunk*>(chunk)->CreateRefs(static_cast<CMapArea*>(area), const_cast<uint32_t*>(refs), doodads, map_objs);
+    }
+
+    const float* WXL_CALL terrain_vertex_constants(void) {
+        return reinterpret_cast<const float*>(&CMapRenderChunk::s_vertexShaderConsts);
+    }
+
     void* WXL_CALL gx_d3d9_device(void) {
         if (!g_theGxDevicePtr) {
             return nullptr;
@@ -640,6 +953,11 @@ namespace WarcraftXL::Binding {
         std::memset(device->m_deviceStates, 0xA5, sizeof device->m_deviceStates);
         device->m_d3dCurrentVertexDecl = nullptr;
         std::memset(device->m_d3dVertexStreamBuf, 0, sizeof device->m_d3dVertexStreamBuf);
+        // The index buffer is bound again only when the engine marks its own as changed
+        // (IStateSync tests m_primIndexDirty first): both, or a draw that keeps the engine's
+        // buffer would draw with the one set behind its back.
+        device->m_d3dCurrentIndexBuf = nullptr;
+        device->m_primIndexDirty     = 1;
         device->m_viewportDirty = 1;
         device->m_scissorRectDirty = 1;
     }
@@ -830,6 +1148,65 @@ namespace WarcraftXL::Binding {
         return WXL_TRUE;
     }
 
+    void* WXL_CALL circle_swap_texture(void* texture) {
+        CTexture* held = CGObject_C::s_selectionTexture;
+        CGObject_C::s_selectionTexture = static_cast<CTexture*>(texture);
+        return held;
+    }
+
+    void* WXL_CALL texture_open(const char* path) {
+        if (!path || !*path) {
+            return nullptr;
+        }
+        // Clamped and loaded later, as the game makes a model's; its load reports into the
+        // client's own status.
+        return CreateTexture(path, &GetGlobalStatusObj());
+    }
+
+    void WXL_CALL texture_close(void* texture) {
+        if (texture) {
+            HandleClose(reinterpret_cast<HOBJECT>(texture));
+        }
+    }
+
+    void* WXL_CALL cvar_lookup(const char* name) {
+        return CVar::Lookup(name);
+    }
+
+    void* WXL_CALL cvar_register(const char* name, const char* help, uint32_t flags, const char* value, void* callback, uint32_t category) {
+        using Callback = bool (*)(CVar*, const char*, const char*, void*);
+        return CVar::Register(name, help, flags, value, reinterpret_cast<Callback>(callback), category, false, nullptr, false);
+    }
+
+    wxl_bool WXL_CALL cvar_set(void* cvar, const char* value) {
+        if (!cvar || !value) {
+            return WXL_FALSE;
+        }
+        static_cast<CVar*>(cvar)->Set(value, true, false, false, true);
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL cvar_write_flags(void* cvar, uint32_t flags) {
+        if (cvar) {
+            static_cast<CVar*>(cvar)->m_flags = flags;
+        }
+    }
+
+    // --- interface.def --------------------------------------------------------------------------
+
+    int32_t WXL_CALL interface_check_signature(const char* toc, const char* extra, const uint8_t* modulus, uint8_t* digest) {
+        // The gate at the top of FrameXML_CheckSignature lets this call through.
+        return toc && digest ? FrameXML_CheckSignature(toc, extra, modulus, digest) : -1;
+    }
+
+    wxl_bool WXL_CALL interface_signature_digest(const char* toc, const char* extra, uint8_t* digest) {
+        if (!toc || !digest) {
+            return WXL_FALSE;
+        }
+        CalculateSignatureMD5(toc, extra && *extra ? extra : nullptr, digest);
+        return WXL_TRUE;
+    }
+
     uint32_t WXL_CALL m2_children(const void* model, void** out, uint32_t capacity) {
         uint32_t count = 0;
         for (CM2Model* child = model ? static_cast<const CM2Model*>(model)->m_attachList : nullptr; child; child = child->m_attachNext) {
@@ -907,6 +1284,48 @@ namespace WarcraftXL::Binding {
         out->key_bone_count = data->m_boneIndicesById.m_count;
         out->matrices = reinterpret_cast<float*>(m->m_boneMatrices);
         return out->bones ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL m2_is_animate_thread(const void* function) {
+        return function == reinterpret_cast<const void*>(&CM2Scene::AnimateThread) ? WXL_TRUE : WXL_FALSE;
+    }
+
+    uint32_t WXL_CALL m2_animate_list(const void* scene, void** out, uint32_t capacity) {
+        if (!scene) {
+            return 0;
+        }
+        constexpr uint32_t kMost = 1u << 20;
+        uint32_t count = 0;
+        for (CM2Model* model = static_cast<const CM2Scene*>(scene)->m_animateList; model && count < kMost; model = model->m_animateNext) {
+            if (out && count < capacity) {
+                out[count] = model;
+            }
+            ++count;
+        }
+        return count;
+    }
+
+    void* WXL_CALL m2_swap_animate_list(void* scene, void* head) {
+        if (!scene) {
+            return nullptr;
+        }
+        CM2Scene* s = static_cast<CM2Scene*>(scene);
+        CM2Model* was = s->m_animateList;
+        s->m_animateList = static_cast<CM2Model*>(head);
+        return was;
+    }
+
+    void WXL_CALL m2_animate_model(void* model, void* scene) {
+        if (!model || !scene) {
+            return;
+        }
+        CM2Model* m = static_cast<CM2Model*>(model);
+        CM2Scene* s = static_cast<CM2Scene*>(scene);
+        if (m->m_fFlags & 0x1000) {
+            m->AnimateMTSimple(&s->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+        } else {
+            m->AnimateMT(&s->m_view, C3Vector(1.0f, 1.0f, 1.0f), C3Vector(0.0f, 0.0f, 0.0f), 1.0f, 1.0f);
+        }
     }
 
     // --- Memory -----------------------------------------------------------------------------
@@ -1012,6 +1431,14 @@ namespace WarcraftXL::Binding {
             return WXL_FALSE;
         }
         Describe(handle->m_archive, out);
+        return WXL_TRUE;
+    }
+
+    wxl_bool WXL_CALL archive_record_of(void* record, wxl_core_archive* out) {
+        if (!record || !out) {
+            return WXL_FALSE;
+        }
+        Describe(static_cast<const System_SFile::ARCHIVEREC*>(record), out);
         return WXL_TRUE;
     }
 
@@ -1184,6 +1611,26 @@ namespace WarcraftXL::Binding {
 
     const char* WXL_CALL texture_name(const void* texture) {
         return texture ? static_cast<const CTexture*>(texture)->m_filename : nullptr;
+    }
+
+    uint32_t WXL_CALL m2_cache_evict(const char* leaf, void** out, uint32_t capacity) {
+        return WarcraftXLEvictModels(leaf, out, capacity);
+    }
+
+    wxl_bool WXL_CALL unit_update_display(void* object) {
+        if (!object) {
+            return WXL_FALSE;
+        }
+        CGObject_C* unit = static_cast<CGObject_C*>(object);
+        if (unit->m_typeId != ID_UNIT && unit->m_typeId != ID_PLAYER) {
+            return WXL_FALSE;
+        }
+        unit->UpdateDisplayInfo(1);
+        return WXL_TRUE;
+    }
+
+    uint32_t WXL_CALL texture_reload(const char* name, uint32_t* busy, uint32_t* atlas) {
+        return WarcraftXLReloadTextures(name, busy, atlas);
     }
 
     const void* WXL_CALL map_obj_bytes(const void* map_obj, uint32_t* size) {
@@ -1363,6 +1810,47 @@ namespace WarcraftXL::Binding {
         return const_cast<CGUnit_C*>(static_cast<const CGUnit_C*>(Object(object)))->GetAura(index);
     }
 
+    wxl_bool WXL_CALL unit_is_outdoors(const void* object) {
+        return object && static_cast<const CGUnit_C*>(Object(object))->IsOutdoors() ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL unit_can_attack(const void* unit, const void* target) {
+        if (!unit || !target) {
+            return WXL_FALSE;
+        }
+        return static_cast<const CGUnit_C*>(Object(unit))->CanAttack(static_cast<const CGUnit_C*>(Object(target)))
+                   ? WXL_TRUE
+                   : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL unit_can_interact(const void* unit, const void* target) {
+        if (!unit || !target) {
+            return WXL_FALSE;
+        }
+        return static_cast<const CGUnit_C*>(Object(unit))->CanInteractNow(static_cast<const CGUnit_C*>(Object(target)))
+                   ? WXL_TRUE
+                   : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL gameobject_can_use(const void* object) {
+        // As CGGameObject_C_TypeBase::CanChangeCursor decides the cursor: highlighted, and usable
+        // now or only too far.
+        if (!object) {
+            return WXL_FALSE;
+        }
+        const CGGameObject_C* go = static_cast<const CGGameObject_C*>(Object(object));
+        if (!go->CanHighlight() || !go->m_typeData) {
+            return WXL_FALSE;
+        }
+        GAME_ERROR_TYPE error = static_cast<GAME_ERROR_TYPE>(0);
+        float distance = 0.0f;
+        const char* text = nullptr;
+        if (go->m_typeData->CanUseNow(&error, &distance, &text)) {
+            return WXL_TRUE;
+        }
+        return error == ERR_USE_TOO_FAR ? WXL_TRUE : WXL_FALSE;
+    }
+
     const void* WXL_CALL item_stats(const void* object) {
         return object ? static_cast<const CGItem_C*>(Object(object))->GetStats() : nullptr;
     }
@@ -1436,6 +1924,221 @@ namespace WarcraftXL::Binding {
         const WOWGUID none{};
         const C3Vector where{ point.x, point.y, point.z };
         return mover->ClickToMove(TRACKTYPE_MOVE, &none, &where, 0.0f) ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL action_face(const void* player, float facing) {
+        if (!player) {
+            return WXL_FALSE;
+        }
+        CGUnit_C* unit = const_cast<CGUnit_C*>(static_cast<const CGUnit_C*>(Object(player)));
+        if (CGUnit_C::s_activeMover != unit->m_obj->m_guid || !CGInputControl::CanTurn(unit)) {
+            return WXL_FALSE;
+        }
+        unit->OnSetRawFacingLocal(OsGetAsyncTimeMs(), facing);
+        return WXL_TRUE;
+    }
+
+    // --- camera.def -----------------------------------------------------------------------------
+
+    void* WXL_CALL camera_world(void) {
+        return CGWorldFrame::GetActiveCamera();
+    }
+
+    wxl_bool WXL_CALL camera_read(const void* camera, wxl_core_camera* out) {
+        if (!camera || !out) {
+            return WXL_FALSE;
+        }
+        const CGCamera* cam = static_cast<const CGCamera*>(camera);
+        Give(&out->position, cam->m_position);
+        Give(&out->forward, cam->Forward());
+        Give(&out->left, cam->Right());
+        Give(&out->up, cam->Up());
+        out->fov = cam->FOV();
+        out->fov_base = cam->m_fov;
+        out->near_z = cam->m_nearZ;
+        out->far_z = cam->m_farZ;
+        out->aspect = cam->m_aspect;
+        Give(&out->pivot, cam->m_targetPosition);
+        out->pivot.z += cam->m_height;
+        out->followed = cam->m_targetGUID.m_guid;
+        out->cinematic = cam->m_model ? 1u : 0u;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL camera_write(void* camera, const wxl_core_camera* view) {
+        if (!camera || !view) {
+            return;
+        }
+        CGCamera* cam = static_cast<CGCamera*>(camera);
+        const C3Vector forward{ view->forward.x, view->forward.y, view->forward.z };
+        if (forward.x * forward.x + forward.y * forward.y + forward.z * forward.z < 0.00000023841858f) {
+            return;
+        }
+        cam->m_position = C3Vector{ view->position.x, view->position.y, view->position.z };
+        if (view->roll != 0.0f) {
+            // The rows SetFacing(forward) builds, turned around the forward by the roll: the view
+            // matrix takes its up from the third (SetGxProjectionAndView), so the world and the
+            // pick turn with it.
+            wxl_vec3 rows[3];
+            if (!wxl::core::camera_facing::Facing(view->forward, view->roll, rows)) {
+                return;
+            }
+            C33Matrix& m = cam->m_facing;
+            m.a0 = rows[0].x; m.a1 = rows[0].y; m.a2 = rows[0].z;
+            m.b0 = rows[1].x; m.b1 = rows[1].y; m.b2 = rows[1].z;
+            m.c0 = rows[2].x; m.c1 = rows[2].y; m.c2 = rows[2].z;
+        } else {
+            cam->SetFacing(forward);
+        }
+        if (cam->m_relativeTo) {
+            // The facing is kept in the parent's frame, which Forward() takes back to the world:
+            // each row times the transpose of ParentToWorld.
+            const C33Matrix parent = cam->ParentToWorld();
+            C33Matrix& m = cam->m_facing;
+            const C3Vector rows[3] = { { m.a0, m.a1, m.a2 }, { m.b0, m.b1, m.b2 }, { m.c0, m.c1, m.c2 } };
+            C3Vector local[3];
+            for (int i = 0; i < 3; ++i) {
+                const C3Vector& w = rows[i];
+                local[i] = C3Vector{ w.x * parent.a0 + w.y * parent.a1 + w.z * parent.a2,
+                                     w.x * parent.b0 + w.y * parent.b1 + w.z * parent.b2,
+                                     w.x * parent.c0 + w.y * parent.c1 + w.z * parent.c2 };
+            }
+            m.a0 = local[0].x; m.a1 = local[0].y; m.a2 = local[0].z;
+            m.b0 = local[1].x; m.b1 = local[1].y; m.b2 = local[1].z;
+            m.c0 = local[2].x; m.c1 = local[2].y; m.c2 = local[2].z;
+        }
+        cam->m_fov = view->fov_base;
+    }
+
+    wxl_bool WXL_CALL world_trace(wxl_vec3 start, wxl_vec3 finish, uint32_t flags, wxl_vec3* hit) {
+        if (!hit) {
+            return WXL_FALSE;
+        }
+        const C3Vector from{ start.x, start.y, start.z };
+        const C3Vector to{ finish.x, finish.y, finish.z };
+        C3Vector point{ 0.0f, 0.0f, 0.0f };
+        float fraction = 1.0f;
+        if (!World::Intersect(from, to, &point, &fraction, flags, nullptr)) {
+            return WXL_FALSE;
+        }
+        return Give(hit, point);
+    }
+
+    // --- input.def ------------------------------------------------------------------------------
+
+    wxl_bool WXL_CALL input_cursor_visible(void) {
+        return g_theGxDevicePtr && g_theGxDevicePtr->m_cursorVisible ? WXL_TRUE : WXL_FALSE;
+    }
+
+    void WXL_CALL input_cursor_set_visible(wxl_bool visible) {
+        if (g_theGxDevicePtr) {
+            g_theGxDevicePtr->CursorSetVisible(visible ? 1 : 0);
+        }
+    }
+
+    void WXL_CALL input_cursor_restore(void) {
+        if (CGInputControl::s_inputControl) {
+            CGInputControl::s_inputControl->UpdateMouseMode(1);
+        } else if (g_theGxDevicePtr) {
+            g_theGxDevicePtr->CursorSetVisible(1);
+        }
+    }
+
+    uint32_t WXL_CALL input_pending_action(const void* control) {
+        return control ? static_cast<uint32_t>(static_cast<const CGInputControl*>(control)->m_pendingDefaultAction) : 0;
+    }
+
+    void WXL_CALL input_clear_pending_action(void* control) {
+        if (control) {
+            static_cast<CGInputControl*>(control)->m_pendingDefaultAction = INPUT_RELEASE_NONE;
+        }
+    }
+
+    wxl_bool WXL_CALL input_default_action(uint32_t button) {
+        CGWorldFrame* frame = CGWorldFrame::s_currentWorldFrame;
+        if (!frame) {
+            return WXL_FALSE;
+        }
+        frame->PerformDefaultAction(static_cast<MOUSEBUTTON>(button));
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL input_mouse_look_stop(void) {
+        CGInputControl* control = CGInputControl::s_inputControl;
+        if (!control || !(control->m_flags & INPUT_MOUSE_LOOK_MASK)) {
+            return;
+        }
+        control->m_pendingDefaultAction = INPUT_RELEASE_NONE;
+        control->UnsetControlBit(INPUT_MOUSE_LOOK_MASK, OsGetAsyncTimeMs(), 0);
+    }
+
+    uint32_t WXL_CALL input_click_hit(const void* frame, uint64_t* guid, wxl_vec3* point) {
+        // As CGWorldFrame::PerformDefaultAction reads it.
+        if (guid) {
+            *guid = 0;
+        }
+        if (point) {
+            *point = wxl_vec3{ 0.0f, 0.0f, 0.0f };
+        }
+        if (!frame) {
+            return 0;
+        }
+        const CGPlayer_C* player = ClntObjMgrGetActivePlayerObj();
+        if (!player || player->m_unit->m_unitFieldCharmedby) {
+            return 0;
+        }
+        if (const CGNamePlateFrame* plate = CGNamePlateFrame::GetNamePlateFocus()) {
+            if (guid) {
+                *guid = plate->m_guid.m_guid;
+            }
+            return 4; // a name plate (wxl_world_hit)
+        }
+        const CGWorldFrame* world = static_cast<const CGWorldFrame*>(frame);
+        const uint32_t kind = world->m_defaultActionHitKind;
+        if (kind > CGWorldFrame::HIT_WORLD_OBJECT) {
+            return 0;
+        }
+        if (guid) {
+            *guid = world->m_defaultActionHit.m_guid.m_guid;
+        }
+        if (point) {
+            *point = wxl_vec3{ world->m_defaultActionHit.m_point.x, world->m_defaultActionHit.m_point.y,
+                               world->m_defaultActionHit.m_point.z };
+        }
+        if (guid && (kind == CGWorldFrame::HIT_GROUND || kind == CGWorldFrame::HIT_WORLD_OBJECT)) {
+            const uint32_t high = static_cast<uint32_t>(*guid >> 32);
+            if ((high & 0xF0000000u) != 0x10000000u || (high & 0x0FF00000u) != 0x0FC00000u) {
+                *guid = 0;
+            }
+        }
+        return kind;
+    }
+
+    wxl_bool WXL_CALL input_spell_targeting(void) {
+        return Spell_C_IsTargeting() ? WXL_TRUE : WXL_FALSE;
+    }
+
+    // --- pose.def -------------------------------------------------------------------------------
+
+    void WXL_CALL model_bone_flags(void* model, uint32_t bone, uint32_t flags, uint32_t mask) {
+        if (model) {
+            static_cast<CM2Model*>(model)->SetBoneFlags(bone, flags, mask);
+        }
+    }
+
+    void WXL_CALL model_bone_transform(void* model, uint32_t bone, const float* matrix) {
+        if (!model || !matrix) {
+            return;
+        }
+        static_assert(sizeof(C44Matrix) == 16 * sizeof(float), "model_bone_transform hands sixteen floats");
+        C44Matrix m;
+        std::memcpy(&m, matrix, sizeof m);
+        static_cast<CM2Model*>(model)->SetBoneProceduralTransform(bone, m);
+    }
+
+    wxl_bool WXL_CALL input_pointer_over_world(void) {
+        CGWorldFrame* frame = CGWorldFrame::s_currentWorldFrame;
+        return frame && CSimpleTop::s_instance && CSimpleTop::s_instance->m_mouseFocus == frame ? WXL_TRUE : WXL_FALSE;
     }
 
     // --- M2: models of the world (wxl.m2's world calls) ----------------------------------------
@@ -1605,21 +2308,6 @@ namespace WarcraftXL::Binding {
         }
     }
 
-    wxl_bool WXL_CALL m2_ground_height(const wxl_vec3* at, float up, float down, float* out_z) {
-        if (!at || !out_z || !World::s_m2Scene) {
-            return WXL_FALSE;
-        }
-        C3Vector start(at->x, at->y, at->z + up);
-        C3Vector end(at->x, at->y, at->z - down);
-        C3Vector hit(0.0f, 0.0f, 0.0f);
-        float distance = 1.0f;
-        if (!World::Intersect(start, end, &hit, &distance, 0x120111, nullptr)) {
-            return WXL_FALSE;
-        }
-        *out_z = hit.z;
-        return WXL_TRUE;
-    }
-
     wxl_bool WXL_CALL m2_attachment_world(void* model, uint32_t attachment, wxl_vec3* out) {
         CM2Model* m = static_cast<CM2Model*>(model);
         if (!m || !out || !(m->m_fFlags & 1) || !m->m_scene || !m->HasAttachment(attachment)) {
@@ -1669,5 +2357,150 @@ namespace WarcraftXL::Binding {
             pivot->z = bone.m_pivot.z;
         }
         return WXL_TRUE;
+    }
+    // --- terrain.def: the map's ground, as wxl.terrain reads and reshapes it -----------------
+
+    wxl_bool WXL_CALL terrain_present(void) {
+        return World::QueryMapId() >= 0 && CMap::bActive && !CMap::bDungeon ? WXL_TRUE : WXL_FALSE;
+    }
+
+    void* WXL_CALL terrain_chunk(int32_t chunk_x, int32_t chunk_y) {
+        if (chunk_x < 0 || chunk_y < 0 || chunk_x >= 1024 || chunk_y >= 1024) {
+            return nullptr;
+        }
+        CMapArea* area = CMap::m_areaTable[64 * (chunk_y >> 4) + (chunk_x >> 4)];
+        if (!area || area->m_asyncObject) {
+            return nullptr;
+        }
+        return area->m_mapChunks[16 * (chunk_y & 15) + (chunk_x & 15)];
+    }
+
+    void* WXL_CALL map_area_chunk(const void* area, int32_t chunk_x, int32_t chunk_y) {
+        if (!area || chunk_x < 0 || chunk_y < 0 || chunk_x > 15 || chunk_y > 15) {
+            return nullptr;
+        }
+        return static_cast<const CMapArea*>(area)->m_mapChunks[16 * chunk_y + chunk_x];
+    }
+
+    wxl_bool WXL_CALL terrain_chunk_place(const void* chunk, int32_t* chunk_x, int32_t* chunk_y) {
+        const CMapChunk* map = static_cast<const CMapChunk*>(chunk);
+        if (reinterpret_cast<uintptr_t>(map) < 0x10000 || !chunk_x || !chunk_y) {
+            return WXL_FALSE;
+        }
+        *chunk_x = map->m_cOffset.x;
+        *chunk_y = map->m_cOffset.y;
+        return *chunk_x >= 0 && *chunk_x < 1024 && *chunk_y >= 0 && *chunk_y < 1024 ? WXL_TRUE : WXL_FALSE;
+    }
+
+    wxl_bool WXL_CALL terrain_chunk_view(void* chunk, wxl_core_terrain_chunk* out) {
+        const CMapChunk* map = static_cast<const CMapChunk*>(chunk);
+        if (reinterpret_cast<uintptr_t>(map) < 0x10000 || !out) {
+            return WXL_FALSE;
+        }
+        // Only a live chunk: its place on the map leads back to it through its tile's slot.
+        if (terrain_chunk(map->m_cOffset.x, map->m_cOffset.y) != chunk || !map->m_height || !map->m_normals) {
+            return WXL_FALSE;
+        }
+        out->chunk_x = map->m_cOffset.x;
+        out->chunk_y = map->m_cOffset.y;
+        out->heights = map->m_height;
+        out->normals = map->m_normals;
+        out->base_z  = map->m_topLeftCoords.z;
+        out->holes   = map->m_header ? map->m_header->m_holes : 0u;
+        return WXL_TRUE;
+    }
+
+    void WXL_CALL terrain_chunk_rebuild(void* chunk, wxl_bool doodads) {
+        CMapChunk* map = static_cast<CMapChunk*>(chunk);
+        if (!map) {
+            return;
+        }
+        map->CreateBounds();
+        if (CMapRenderChunk* render = map->m_renderChunk) {
+            C3Vector at = render->m_vec1;
+            if (render->m_mapChunks[0]) {
+                render->AddBatch(render->m_mapChunks[0], render->m_mapChunks[1], &at, render->m_unkFlags);
+            }
+            if (render->m_chunkBuf && render->m_chunkBuf->m_vertexBuf) {
+                render->m_chunkBuf->m_vertexBuf->m_hasData = 0;
+            }
+        }
+        if (doodads && map->m_detailDoodadInst) {
+            CDetailDoodad::FreeInst(map->m_detailDoodadInst);
+            map->m_detailDoodadInst = nullptr;
+        }
+    }
+
+    void WXL_CALL terrain_forget_collision(void) {
+        CMovement_C::ForgetFacetQuery();
+    }
+
+    void WXL_CALL unit_fall_local(const void* object) {
+        const CGUnit_C* unit = static_cast<const CGUnit_C*>(Object(object));
+        if (unit && unit->m_movement) {
+            unit->m_movement->OnFallLocal(OsGetAsyncTimeMs());
+        }
+    }
+
+    // --- NetClient: a message of a mod's, sent as the client sends its own -----------------------
+
+    wxl_bool WXL_CALL net_send(const void* message, uint32_t size) {
+        // ClientServices::Send2 ends the client when there is no connection: ask first.
+        if (!message || size < 4 || !ClientServices::s_currentConnection) {
+            return WXL_FALSE;
+        }
+        // Over the message's bytes, m_alloc -1: nothing to free, as the client wraps what it receives.
+        CDataStore msg(static_cast<uint8_t*>(const_cast<void*>(message)), size);
+        ClientServices::Send2(&msg);
+        return WXL_TRUE;
+    }
+
+    // --- Animation: a unit's animation as the client plays it --------------------------------
+
+    CGUnit_C* UnitOf(void* object) {
+        return const_cast<CGUnit_C*>(static_cast<const CGUnit_C*>(Object(object)));
+    }
+
+    void WXL_CALL unit_play_animation(void* object, uint32_t anim, uint32_t flags) {
+        if (CGUnit_C* unit = UnitOf(object)) {
+            unit->PlayBaseAnimation(anim, static_cast<int32_t>(flags));
+        }
+    }
+
+    void WXL_CALL unit_update_animation(void* object) {
+        if (CGUnit_C* unit = UnitOf(object)) {
+            unit->UpdateBaseAnimation(0, -1);
+        }
+    }
+
+    uint32_t WXL_CALL unit_shown_animation(const void* object) {
+        const CGUnit_C* unit = static_cast<const CGUnit_C*>(Object(object));
+        return unit ? unit->GetCurrentTorsoAnimId() : 0xFFFFFFFFu;
+    }
+
+    void WXL_CALL unit_animation_speed(void* object, uint32_t anim, float speed) {
+        CGUnit_C* unit = UnitOf(object);
+        CM2Model* model = unit ? unit->m_worldModel : nullptr;
+        if (!model || !(model->m_fFlags & 1)) {
+            return;
+        }
+        if (model->GetBoneSequenceId(0xFFFFFFFF) == anim) {
+            unit->SetKeyBoneSequenceSpeed(model, 0xFFFFFFFF, speed, 0);
+        }
+        if (unit->m_torsoKeyBone != -1 && model->GetBoneSequenceId(static_cast<uint32_t>(unit->m_torsoKeyBone)) == anim) {
+            unit->SetKeyBoneSequenceSpeed(model, static_cast<uint32_t>(unit->m_torsoKeyBone), speed, 0);
+        }
+    }
+
+    uint32_t WXL_CALL unit_animation_length(const void* object, uint32_t anim) {
+        const CGUnit_C* unit = static_cast<const CGUnit_C*>(Object(object));
+        return unit && unit->m_worldModel ? m2_animation_length(unit->m_worldModel, anim) : 0;
+    }
+
+    void WXL_CALL unit_lift_local(void* object, float z) {
+        CGUnit_C* unit = UnitOf(object);
+        if (unit && unit->m_movement) {
+            unit->m_movement->m_position.z = z;
+        }
     }
 }

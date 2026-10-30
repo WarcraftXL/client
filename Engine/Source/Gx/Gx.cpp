@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include "Engine/Source/Gx/Buffer.h"
+#include "Engine/Source/Gx/CGxBuf.h"
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxPool.h"
 #include "Engine/Source/Gx/Gx.h"
@@ -10,6 +11,10 @@
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/Storm/H/storm.h"
 #include "WarcraftXL/Seams.h"
+
+#if defined(WOWDECOMP_ARCH_64)
+#include "Engine/Source/Gx/CGxDeviceVk/CGxDeviceVk.h"
+#endif
 
 // STATIC: 0x00A2D57C
 static const uint32_t s_texelSize[GxTexFormats_Last] = { 0, 4, 4, 2, 2, 2, 2, 4, 4, 2, 4, 4, 4 };
@@ -40,7 +45,7 @@ static BlitFormat s_blitFormats[GxTexFormats_Last] = {
 };
 
 // STATIC: 0x00AD87E4
-const char* g_gxApiNames[GxApis_Last] = { "OpenGL", "D3D9", "D3D9Ex", "D3D10", "D3D11", "GLL" };
+const char* g_gxApiNames[GxApis_Last] = { "OpenGL", "D3D9", "D3D9Ex", "D3D10", "D3D11", "GLL", "Vulkan" };
 
 // STATIC: 0x00AD8AC0
 static uint32_t s_vertexSize[GxVertexBufferFormats_Last] = { 12, 24, 28, 32, 36, 40, 44, 16, 24, 32, 20, 28, 48, 48 };
@@ -131,6 +136,12 @@ int32_t GxApiSupported(EGxApi api) {
         case GxApi_D3d9Ex:
             return 1;
 
+#if defined(WOWDECOMP_ARCH_64)
+        // Offered while the runtime carries the renderer; a machine without it falls back to D3D9.
+        case GxApi_Vulkan:
+            return 1;
+#endif
+
         default:
             return 0;
     }
@@ -198,6 +209,13 @@ CGxDevice* CreateGxDevice(EGxApi api, GxWindowProc windowProc, const CGxFormat& 
             device = CreateCGxDeviceD3d9Ex();
             g_theGxDevicePtr = device;
             break;
+
+#if defined(WOWDECOMP_ARCH_64)
+        case GxApi_Vulkan:
+            device = CreateCGxDeviceVk();
+            g_theGxDevicePtr = device;
+            break;
+#endif
 
         default:
             device = g_theGxDevicePtr;
@@ -281,6 +299,48 @@ void GxShaderConstantsSet(EGxShTarget target, uint32_t index, const float* const
     if (constants) {
         g_theGxDevicePtr->ShaderConstantsSet(target, index, constants, count);
     }
+}
+
+// Not in the original: a bone palette exists only on the Vulkan device, which says so in its caps.
+void GxBonePaletteSet(const C34Matrix* bones, uint32_t count) {
+#if defined(WOWDECOMP_ARCH_64)
+    if (g_theGxDevicePtr->m_api == GxApi_Vulkan && g_theGxDevicePtr->Caps().BonePalette()) {
+        static_cast<CGxDeviceVk*>(g_theGxDevicePtr)->BonePaletteSet(bones, count);
+    }
+#endif
+}
+
+// Not in the original: a vertex range in 32 bits over a 32-bit index buffer, as CGxBatch holds it otherwise.
+void GxDrawIndexRange(CGxBatch* batch, uint32_t minIndex, uint32_t maxIndex) {
+    CGxBuf* indices = g_theGxDevicePtr->m_primIndexBuf;
+
+    if (indices && indices->m_pool && indices->m_pool->m_target == GxPoolTarget_Index32) {
+        CGxBatch32 wide;
+        wide.m_primType = batch->m_primType;
+        wide.m_start = batch->m_start;
+        wide.m_count = batch->m_count;
+        wide.m_minIndex = static_cast<uint16_t>(minIndex);
+        wide.m_maxIndex = static_cast<uint16_t>(maxIndex);
+        wide.m_minIndex32 = minIndex;
+        wide.m_maxIndex32 = maxIndex;
+        GxDraw32(&wide, 1);
+        return;
+    }
+
+    batch->m_minIndex = static_cast<uint16_t>(minIndex);
+    batch->m_maxIndex = static_cast<uint16_t>(maxIndex);
+    g_theGxDevicePtr->Draw(batch, 1);
+}
+
+// Not in the original: so do 32-bit index pools.
+void GxDraw32(CGxBatch32* batch, int32_t count) {
+#if defined(WOWDECOMP_ARCH_64)
+    if (g_theGxDevicePtr->m_api == GxApi_Vulkan) {
+        static_cast<CGxDeviceVk*>(g_theGxDevicePtr)->Draw32(batch, count);
+        return;
+    }
+#endif
+    g_theGxDevicePtr->Draw(batch, count);
 }
 
 // VERIFY: 2d7b5b76 manual

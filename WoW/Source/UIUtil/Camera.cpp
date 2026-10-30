@@ -40,6 +40,7 @@
 #include "WoW/Source/UIUtil/InputControl.h"
 #include "WoW/Source/WorldClient/FrameTime.h"
 #include "WoW/Source/WorldClient/World.h"
+#include "WarcraftXL/Seams.h"
 #include "WarcraftXL/Points.h"
 
 static const float ROTATION_SPEED = 0.09f;
@@ -2674,9 +2675,11 @@ void CGCamera::CalcTargetCamera(CGObject_C* target, uint32_t time) {
 // OFFSET: 0x00607B00
 int32_t CGCamera::UpdateCallback(const void* data, void* param) {
     WXL_POINT_0(data, param); // wxl.point
+    wxl::seam::Camera::UpdateCallback::Before(data, param);
     CGCamera* camera = static_cast<CGCamera*>(param);
 
     if (!camera) {
+        wxl::seam::Camera::UpdateCallback::After(1, data, param);
         return 1;
     }
 
@@ -2687,6 +2690,7 @@ int32_t CGCamera::UpdateCallback(const void* data, void* param) {
     if (camera->m_model) {
         camera->CalcModelCamera(time);
         camera->CheckUnderwater();
+        wxl::seam::Camera::UpdateCallback::After(1, data, param);
         return 1;
     }
 
@@ -2695,6 +2699,7 @@ int32_t CGCamera::UpdateCallback(const void* data, void* param) {
     if (target) {
         camera->CalcTargetCamera(target, time);
         camera->CheckUnderwater();
+        wxl::seam::Camera::UpdateCallback::After(1, data, param);
         return 1;
     }
 
@@ -2705,6 +2710,7 @@ int32_t CGCamera::UpdateCallback(const void* data, void* param) {
         camera->CheckUnderwater();
     }
 
+    wxl::seam::Camera::UpdateCallback::After(1, data, param);
     return 1;
 }
 

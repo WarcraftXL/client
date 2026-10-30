@@ -85,9 +85,38 @@ if (Python3_Interpreter_FOUND)
             COMMENT "Checking the SDK's update-field table against the fork"
             VERBATIM)
         add_dependencies(WorldClient wxl-fields-check)
+
+        # The SDK's engine headers are generated from this fork's types, measured by clang-cl for
+        # x86 and x64: generate_engine.py --check fails when one is not what the fork gives
+        # (EngineLayouts.gen.cpp also holds the x64 layouts to them at compile time).
+        add_custom_target(wxl-engine-check
+            COMMAND "${Python3_EXECUTABLE}" "${WXL_CORE_DIR}/tools/engine/generate_engine.py" --check
+                    --client "${CMAKE_SOURCE_DIR}" --sdk "${WXL_SDK_DIR}" --core "${WXL_CORE_DIR}"
+                    --clang-cl "${WXL_FIELDS_CLANG_CL}"
+            COMMENT "Checking the SDK's engine headers against the fork"
+            VERBATIM)
+        add_dependencies(WorldClient wxl-engine-check)
+
+        # The x86 runtime's recompiled bodies (core/src/deinlined/) are extracted from this fork;
+        # telling one template's instantiations apart reads the stock Wow.exe, so the check runs
+        # when one is named (WXL_WOW_EXE).
+        set(WXL_WOW_EXE "$ENV{WXL_WOW_EXE}" CACHE FILEPATH "A stock Wow.exe 12340, for the de-inlined bodies' check")
+        if (WXL_WOW_EXE)
+            add_custom_target(wxl-deinlined-check
+                COMMAND "${Python3_EXECUTABLE}" "${WXL_CORE_DIR}/tools/extract/extract.py" --deinlined --check
+                        --client "${CMAKE_SOURCE_DIR}" --sdk "${WXL_SDK_DIR}" --binary "${WXL_WOW_EXE}"
+                        --clang-cl "${WXL_FIELDS_CLANG_CL}"
+                COMMENT "Checking the x86 runtime's recompiled bodies against the fork"
+                VERBATIM)
+            add_dependencies(WorldClient wxl-deinlined-check)
+        else ()
+            message(STATUS "WXL_WOW_EXE is not set, so core's recompiled bodies (src/deinlined/) are not "
+                "checked against the fork in this build; run core/tools/extract/extract.py --deinlined --check.")
+        endif ()
     else ()
-        message(STATUS "clang-cl was not found, so the update-field table is not checked against "
-            "the fork in this build; run core/tools/fields/generate_update_fields.py --check by hand.")
+        message(STATUS "clang-cl was not found, so the update-field table and the engine headers are not "
+            "checked against the fork in this build; run core/tools/fields/generate_update_fields.py --check "
+            "and core/tools/engine/generate_engine.py --check by hand.")
     endif ()
 else ()
     message(WARNING "Python 3 was not found, so the seam wiring check will not run in this build. "
@@ -100,16 +129,16 @@ endif ()
 # connection's, Os the window procedure's, BlizzardCore the file open's, SoundInterface
 # the sound's, Scrn the paint's, Gx the device's, Frame the interface's, ConsoleDevice
 # the device's creation, Magic the spell casting's, Storm the allocator's, DB the client
-# databases' and WoWCommon the character appearance's. A library added
+# databases', WoWCommon the character appearance's and UIUtil the camera's. A library added
 # here needs nothing else: the calls are declared by Seams.h,
 # which these include directories make reachable.
 set(WXL_SEAM_LIBRARIES WorldClient Event ObjectMgrClient Object Ui FrameScript Net Os BlizzardCore
     SoundInterface Scrn Gx Frame ConsoleDevice Magic ConsoleBase Glue WowServices Storm DB Services Model2
-    BLPFile SoundEngine WoWCommon)
+    BLPFile SoundEngine WoWCommon UIUtil FrameXML)
 
-# The libraries whose sources carry point lines (WarcraftXL/Points.h) and no seam call: UIUtil
-# holds the camera's.
-set(WXL_POINT_LIBRARIES UIUtil)
+# The libraries whose sources carry point lines (WarcraftXL/Points.h) and no seam call: none
+# today, the camera's UIUtil carrying seams too.
+set(WXL_POINT_LIBRARIES)
 
 # The libraries whose sources carry profiler zones (WarcraftXL/Profile.h) and no seam call. The
 # zones compile to nothing on Win32, so these need the runtime only on x64.
@@ -131,7 +160,8 @@ endif ()
 
 # --- The runtime: core, built here as win-x64 ------------------------------------------------------
 set(WXL_CORE_ARCH "win-x64" CACHE STRING "Architecture of the core build tree" FORCE)
-set(WXL_CORE_MODS OFF CACHE BOOL "The mods core ships are win-x86 only" FORCE)
+set(WXL_CORE_MODS ON CACHE BOOL "The mods core ships for x64: they land beside wxl.lua" FORCE)
+set(WXL_CORE_MODS_DIR "${CMAKE_SOURCE_DIR}/bin/Win/Mods" CACHE PATH "Where core puts its mods: the Mods/ the client scans" FORCE)
 set(WXL_CORE_LUA_MODS "${CMAKE_SOURCE_DIR}/bin/Win/Mods" CACHE PATH "Where core puts wxl.lua: the Mods/ the client scans" FORCE)
 
 # Core links the CRT statically, through CMAKE_MSVC_RUNTIME_LIBRARY. The root of this tree
@@ -160,13 +190,17 @@ endforeach ()
 
 # --- The client's side of the boundary -------------------------------------------------------------
 # What the client hands the runtime: the accessors of wxl_core_init, one function per row of
-# core's binding table (Binding.cpp), assigned by Init.cpp. Linked by every executable and by
-# WorldClient, whose World.cpp holds the seam calls.
-add_library(WarcraftXLClient STATIC Init.cpp Binding.cpp)
+# core's binding table (Binding.cpp, and ScriptUnwind.cpp for the rows inside the Lua state),
+# assigned by Init.cpp. Linked by every executable and by
+# WorldClient, whose World.cpp holds the seam calls. GxCapture.cpp records a frame of the D3D9
+# device (gxCapture) in core's capture format, for the Vulkan renderer's tests.
+add_library(WarcraftXLClient STATIC Init.cpp Binding.cpp ScriptUnwind.cpp EngineLayouts.gen.cpp GxCapture.cpp)
 target_include_directories(WarcraftXLClient
     PUBLIC
         "${WXL_CORE_DIR}/include"
         "${WXL_SDK_DIR}/include"
+    PRIVATE
+        "${WXL_SDK_DIR}/engine/include"
 )
 # The client's own headers are external to this code: it is held to /W4 /permissive-, they are
 # not (the decompile carries its warnings at every level).
@@ -184,6 +218,9 @@ foreach (target ${WXL_SEAM_LIBRARIES})
         target_link_libraries(${target} PRIVATE wxl-core)
     endif ()
 endforeach ()
+# The Vulkan device's adapter (Gx/CGxDeviceVk) holds the runtime to the CGxDevice layout of the
+# SDK's engine headers.
+target_include_directories(Gx PRIVATE "${WXL_SDK_DIR}/engine/include")
 foreach (target ${WXL_ZONE_LIBRARIES} ${WXL_POINT_LIBRARIES})
     target_include_directories(${target} PRIVATE "${WXL_CORE_DIR}/include" "${WXL_SDK_DIR}/include")
     target_link_libraries(${target} PRIVATE wxl-core)

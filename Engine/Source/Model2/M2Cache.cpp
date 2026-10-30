@@ -8,6 +8,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Model2/M2Model.h"
 #include "Engine/Source/Model2/M2Scene.h"
+#include "WarcraftXL/Seams.h"
 #include "Engine/Source/Os/Processor.h"
 #include "Engine/Source/Os/System.h"
 #include "Engine/Source/Os/TimeManager.h"
@@ -50,6 +51,13 @@ void CM2Cache::ClearSharedHash() {
 // VERIFY: de6dcef8 auto
 // OFFSET: 0x0081BFA0
 void CM2Cache::BeginThread(void (*func)(void*), void* param) {
+    void* wxlSelf = this;
+    void* wxlFunc = reinterpret_cast<void*>(func);
+    void* wxlParam = param;
+    if (wxl::seam::M2::BeginThread::Gate(&wxlSelf, &wxlFunc, &wxlParam)) {
+        return;
+    }
+
     this->m_threadFunc = func;
     this->m_threadParam = param;
     this->m_threadStart.Set();
@@ -58,6 +66,11 @@ void CM2Cache::BeginThread(void (*func)(void*), void* param) {
 // VERIFY: b68bbc6f auto
 // OFFSET: 0x0081BFD0
 void CM2Cache::WaitThread() {
+    void* wxlSelf = this;
+    if (wxl::seam::M2::WaitThread::Gate(&wxlSelf)) {
+        return;
+    }
+
     this->m_threadDone.Wait(0xFFFFFFFF);
 }
 
@@ -445,4 +458,47 @@ CM2Cache::CM2Cache() : m_threadStart(0, 0), m_threadDone(0, 0) {
     this->m_threadParam = nullptr;
     this->unused_101C[0] = '\0';
     this->unused_105C[0] = '\0';
+}
+
+// The model files WarcraftXL drops from the cache so their next use reads the file again
+// (WarcraftXL/Binding.cpp, m2_cache_evict): each one whose file name without its folder is `leaf`,
+// unlinked from its bucket as ~CM2Shared unlinks it. The models made from it keep it; its last
+// Release then deletes it, since it is in no bucket.
+uint32_t WarcraftXLEvictModels(const char* leaf, void** out, uint32_t capacity) {
+    if (!leaf || !*leaf) {
+        return 0;
+    }
+
+    uint32_t evicted = 0;
+
+    for (uint32_t i = 0; i < sizeof(s_cache.m_shared) / sizeof(s_cache.m_shared[0]); i++) {
+        CM2Shared* shared = s_cache.m_shared[i];
+
+        while (shared) {
+            CM2Shared* next = shared->m_next;
+
+            if (shared->m_fileNameWithoutPath && !SStrCmpI(shared->m_fileNameWithoutPath, leaf, STORM_MAX_STR)) {
+                if (shared->m_previous) {
+                    *shared->m_previous = shared->m_next;
+                }
+
+                if (shared->m_next) {
+                    shared->m_next->m_previous = shared->m_previous;
+                }
+
+                shared->m_previous = nullptr;
+                shared->m_next = nullptr;
+
+                if (out && evicted < capacity) {
+                    out[evicted] = shared;
+                }
+
+                evicted++;
+            }
+
+            shared = next;
+        }
+    }
+
+    return evicted;
 }

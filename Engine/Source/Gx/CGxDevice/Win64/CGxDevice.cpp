@@ -10,6 +10,7 @@
 #include "Engine/Source/Gx/CGxDevice/CGxDevice.h"
 #include "Engine/Source/Gx/CGxDeviceD3d/CGxDeviceD3d.h"
 #include "Engine/Source/Gx/CGxDeviceD3d9Ex/CGxDeviceD3d9Ex.h"
+#include "Engine/Source/Gx/CGxDeviceVk/CGxDeviceVk.h"
 
 // STATIC: 0x00AD8CE8
 static D3DMULTISAMPLE_TYPE s_d3dMultisampleTypes[9] = { D3DMULTISAMPLE_NONE, D3DMULTISAMPLE_2_SAMPLES, D3DMULTISAMPLE_4_SAMPLES, D3DMULTISAMPLE_6_SAMPLES, D3DMULTISAMPLE_8_SAMPLES, D3DMULTISAMPLE_10_SAMPLES, D3DMULTISAMPLE_12_SAMPLES, D3DMULTISAMPLE_14_SAMPLES, D3DMULTISAMPLE_16_SAMPLES };
@@ -35,6 +36,12 @@ int32_t CGxDevice::AdapterFormats(EGxApi api, TSGrowableArray<CGxFormat>& format
     formats.m_chunk = 64;
     formats.Reserve(256, 0);
 
+    // The formats of the device in use: a D3D9 request that WarcraftXL.ini turned into Vulkan lists
+    // the Vulkan device's.
+    if ((api == GxApi_D3d9 || api == GxApi_D3d9Ex) && CGxDeviceVkSampleCounts()) {
+        api = GxApi_Vulkan;
+    }
+
     switch (api) {
         case GxApi_OpenGl:
             CGxDevice::OpenGlAdapterFormats(formats);
@@ -47,6 +54,29 @@ int32_t CGxDevice::AdapterFormats(EGxApi api, TSGrowableArray<CGxFormat>& format
         case GxApi_D3d9Ex:
             CGxDevice::D3d9ExAdapterFormats(formats);
             break;
+
+        case GxApi_Vulkan: {
+            // D3D9's modes and depth formats on this adapter, with the multisample counts the Vulkan
+            // device draws (once it is made; before, D3D9's own counts).
+            CGxDevice::D3dAdapterFormats(formats);
+            uint32_t counts = CGxDeviceVkSampleCounts();
+
+            if (counts) {
+                uint32_t kept = 0;
+
+                for (uint32_t i = 0; i < formats.Count(); i++) {
+                    uint32_t samples = formats[i].m_multisampleCount;
+
+                    if (samples && !(samples & (samples - 1)) && (counts & samples)) {
+                        formats[kept++] = formats[i];
+                    }
+                }
+
+                formats.SetCount(kept);
+            }
+
+            break;
+        }
 
         default:
             break;

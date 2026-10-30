@@ -30,6 +30,9 @@
 // STATIC: 0x00A45644
 static const uint32_t s_skinProfileBoneCounts[4] = { 256, 64, 53, 21 };
 
+// Not in the original: the indices an instanced buffer of 32-bit indices holds at most.
+static const uint32_t s_wideIndexBudget = 0x100000;
+
 // STATIC: 0x00AF59D8
 static uint32_t s_sequenceIndex = 0xFFFFFFFF;
 
@@ -339,15 +342,54 @@ static void ConvertTextureComboEntry(TextureComboList* list, int32_t adjust, uin
 // OFFSET: 0x008360A0
 int32_t CM2Shared::SetIndices() {
     if (!this->m_indexPool) {
-        this->m_indexPool = g_theGxDevicePtr->PoolCreate(GxPoolTarget_Index, GxPoolUsage_Dynamic, sizeof(uint16_t) * this->m_instances * this->m_skinData->m_indices.m_count, GxPoolHintBit_Unk1, this->m_fileNameWithoutPath);
-        this->m_indexBuf = g_theGxDevicePtr->BufCreate(this->m_indexPool, sizeof(uint16_t), this->m_instances * this->m_skinData->m_indices.m_count, 0);
+        // Not in the original: indices past 16 bits (a skin over 65535 indices, or instances
+        // reaching past vertex 65535) go into a pool of 32-bit indices, where the device has one.
+        uint32_t count = this->m_instances * this->m_skinData->m_indices.m_count;
+        int32_t wide = g_theGxDevicePtr->Caps().Index32() && (count > 0xFFFF || this->m_instances * this->m_skinData->m_vertices.m_count > 0x10000);
+        uint32_t itemSize = wide ? sizeof(uint32_t) : sizeof(uint16_t);
+
+        this->m_indexPool = g_theGxDevicePtr->PoolCreate(wide ? GxPoolTarget_Index32 : GxPoolTarget_Index, GxPoolUsage_Dynamic, itemSize * count, GxPoolHintBit_Unk1, this->m_fileNameWithoutPath);
+        this->m_indexBuf = g_theGxDevicePtr->BufCreate(this->m_indexPool, itemSize, count, 0);
 
         if (!this->m_indexPool || !this->m_indexBuf) {
             return 0;
         }
     }
 
-    if (!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid) {
+    if ((!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid) && this->m_indexPool->m_target == GxPoolTarget_Index32) {
+        uint32_t* indices = reinterpret_cast<uint32_t*>(g_theGxDevicePtr->BufLock(this->m_indexBuf));
+
+        if (!indices) {
+            return 0;
+        }
+
+        int32_t sharedVertices = (this->m_cache->m_flags & 8) || (this->m_data->m_bones.m_count == 1 && (this->m_cache->m_flags & 0x40));
+        uint32_t indexStart = 0;
+
+        for (uint32_t i = 0; i < this->m_skinData->m_skinSections.m_count; i++) {
+            M2SkinSection* section = &this->m_skinSections[i];
+            uint32_t start = M2SkinSectionIndexStart(*this->m_skinData, this->m_skinData->m_skinSections[i]);
+            uint32_t offset = sharedVertices ? 0 : 0u - section->m_vertexStart;
+
+            for (uint32_t instance = 0; instance < this->m_instances; instance++) {
+                for (uint32_t j = 0; j < section->m_indexCount; j++) {
+                    indices[j] = offset + this->m_skinData->m_indices[start + j];
+                }
+
+                indices += section->m_indexCount;
+                offset += sharedVertices ? this->m_skinData->m_vertices.m_count : section->m_vertexCount;
+            }
+
+            M2SkinSectionSetDrawStart(*section, indexStart);
+            indexStart += this->m_instances * section->m_indexCount;
+        }
+
+        CGxBuf* buf = this->m_indexBuf;
+        g_theGxDevicePtr->BufUnlock(buf, 0);
+        buf->m_hasData = 1;
+    }
+
+    if ((!this->m_indexBuf->m_hasData || !this->m_indexBuf->m_valid) && this->m_indexPool->m_target != GxPoolTarget_Index32) {
         uint16_t* indices = reinterpret_cast<uint16_t*>(g_theGxDevicePtr->BufLock(this->m_indexBuf));
 
         if (!indices) {
@@ -1141,10 +1183,16 @@ int32_t CM2Shared::InitializeSkinProfile() {
 
     M2SkinProfile* skinData = this->m_skinData;
 
-    this->m_maxInstances = skinData->m_indices.m_count ? 0x10000 / skinData->m_indices.m_count : 1;
+    // Not in the original: with 32-bit index pools an instanced buffer is bounded by its size
+    // (s_wideIndexBudget indices), not by 16-bit indices; with a bone palette the bones of the
+    // instances drawn at once are bounded by the palette, not by the skin's vertex registers.
+    uint32_t indexBudget = g_theGxDevicePtr->Caps().Index32() ? s_wideIndexBudget : 0x10000;
+    uint32_t boneBudget = g_theGxDevicePtr->Caps().BonePalette() ? g_theGxDevicePtr->Caps().BonePalette() : skinData->m_boneCountMax;
+
+    this->m_maxInstances = skinData->m_indices.m_count ? indexBudget / skinData->m_indices.m_count : 1;
 
     for (uint32_t i = 0; i < skinData->m_skinSections.m_count; i++) {
-        uint32_t instances = skinData->m_boneCountMax / skinData->m_skinSections[i].m_boneCount;
+        uint32_t instances = boneBudget / skinData->m_skinSections[i].m_boneCount;
 
         if (this->m_maxInstances > instances) {
             this->m_maxInstances = instances;
@@ -1543,6 +1591,7 @@ CM2Shared::CM2Shared(CM2Cache* cache) {
 
 // INLINED
 int32_t M2Init(uint8_t* base, uint32_t size, M2Data& data) {
+    WXL_POINT_6(base, size, data); // wxl.point
     if (reinterpret_cast<uint8_t*>(&data) < base || reinterpret_cast<uint8_t*>(&data + 1) > base + size) {
         return 0;
     }
@@ -1680,6 +1729,11 @@ int32_t CM2Shared::Initialize() {
         uint32_t constants = g_theGxDevicePtr->Caps().m_shaderConstants[0];
         uint32_t bones = (constants > 0xC0 ? constants - 64 : constants - 32) / 3;
 
+        // Not in the original: a device with a bone palette draws as many bones as it holds.
+        if (g_theGxDevicePtr->Caps().BonePalette()) {
+            bones = g_theGxDevicePtr->Caps().BonePalette();
+        }
+
         if (bones < maxBones) {
             maxBones = bones;
         }
@@ -1745,7 +1799,7 @@ int32_t CM2Shared::Initialize() {
     return 1;
 }
 
-// INLINED
+// OFFSET: 0x0083CF00
 int32_t CM2Shared::FinishLoading() {
     WXL_POINT_5(this); // wxl.point
     if (this->m_flags & 1) {

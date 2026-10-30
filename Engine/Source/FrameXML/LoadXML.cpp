@@ -17,6 +17,7 @@
 #include "Engine/Source/Tempest/C2Vector.h"
 #include "Engine/Source/Tempest/CImVector.h"
 #include "Engine/Source/lua-5.1/src/lua.h"
+#include "WarcraftXL/Seams.h"
 
 // STATIC: 0x00A43F38
 static const XMLENUMVALUE s_frameStrata[] = {
@@ -1032,7 +1033,7 @@ int32_t ProcessFileForMakeSign(MD5_CTX* md5, const char* filename, const char* b
 
 // VERIFY: e9b24e51 auto
 // OFFSET: 0x008164D0
-static void CalculateSignatureMD5(const char* tocFile, const char* extraFile, uint8_t* digest) {
+void CalculateSignatureMD5(const char* tocFile, const char* extraFile, uint8_t* digest) {
     MD5_CTX context;
     MD5Init(&context);
     ProcessFileForMakeSign(&context, tocFile, "");
@@ -1069,6 +1070,11 @@ static int32_t VerifySignature(const uint8_t* data, uint32_t size, const uint8_t
 // VERIFY: 29422f35 manual
 // OFFSET: 0x008165E0
 int32_t FrameXML_CheckSignature(const char* tocFile, const char* extraFile, const uint8_t* modulus, uint8_t* digest) {
+    int32_t gatedResult = 0;
+    if (wxl::seam::FrameXML::CheckSignature::Gate(&gatedResult, &tocFile, &extraFile, &modulus, &digest)) {
+        return gatedResult;
+    }
+
 #ifdef DISABLE_SIGNATURE_CHECKS
     CalculateSignatureMD5(tocFile, extraFile, digest);
     return 3;

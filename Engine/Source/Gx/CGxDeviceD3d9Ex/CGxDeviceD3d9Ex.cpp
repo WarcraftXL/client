@@ -1,3 +1,4 @@
+#include "WarcraftXL/Seams.h"
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -801,9 +802,12 @@ void CGxDeviceD3d9Ex::XformSetView(const C44Matrix& matrix) {
 // VERIFY: ad3f6a3b auto
 // OFFSET: 0x006AA070
 void CGxDeviceD3d9Ex::IShaderCreatePixel(CGxShader* shader) {
+    wxl::seam::Gx::D3d9ExIShaderCreatePixel::Before(this, shader);
+
     shader->m_valid = 0;
 
     if (!this->m_context) {
+        wxl::seam::Gx::D3d9ExIShaderCreatePixel::After(this, shader);
         return;
     }
 
@@ -815,14 +819,19 @@ void CGxDeviceD3d9Ex::IShaderCreatePixel(CGxShader* shader) {
         shader->m_apiSpecific = pixelShader;
         shader->m_valid = 1;
     }
+
+    wxl::seam::Gx::D3d9ExIShaderCreatePixel::After(this, shader);
 }
 
 // VERIFY: d17e64b7 auto
 // OFFSET: 0x006AA0D0
 void CGxDeviceD3d9Ex::IShaderCreateVertex(CGxShader* shader) {
+    wxl::seam::Gx::D3d9ExIShaderCreateVertex::Before(this, shader);
+
     shader->m_valid = 0;
 
     if (!this->m_context) {
+        wxl::seam::Gx::D3d9ExIShaderCreateVertex::After(this, shader);
         return;
     }
 
@@ -834,6 +843,8 @@ void CGxDeviceD3d9Ex::IShaderCreateVertex(CGxShader* shader) {
         shader->m_apiSpecific = vertexShader;
         shader->m_valid = 1;
     }
+
+    wxl::seam::Gx::D3d9ExIShaderCreateVertex::After(this, shader);
 }
 
 // VERIFY: 984b0baf manual
@@ -3093,7 +3104,10 @@ void CGxDeviceD3d9Ex::ScenePresent() {
 // VERIFY: 8cf389a5 manual
 // OFFSET: 0x006A77C0
 void CGxDeviceD3d9Ex::Draw(CGxBatch* batch, int32_t count) {
+    wxl::seam::Gx::D3d9ExDraw::Before(this, batch, count);
+
     if (!this->m_context || this->m_intF5C) {
+        wxl::seam::Gx::D3d9ExDraw::After(this, batch, count);
         return;
     }
 
@@ -3121,6 +3135,8 @@ void CGxDeviceD3d9Ex::Draw(CGxBatch* batch, int32_t count) {
         uint32_t primCount = this->PrimCalcCount(batch->m_primType, batch->m_count);
         this->m_d3dDevice->DrawPrimitive(s_primitiveConversion[batch->m_primType], baseVertexIndex, primCount);
     }
+
+    wxl::seam::Gx::D3d9ExDraw::After(this, batch, count);
 }
 
 // VERIFY: 27cec45a auto
